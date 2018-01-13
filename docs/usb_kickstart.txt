@@ -1,0 +1,61 @@
+Wrting this ISO to a USB flash drive
+
+Prepare the drive. 
+fdisk /dev/sdc
+
+IF ANYTHING IS CURRENTLY ON YOUR DRIVE---
+delete anything that is there with d.  
+save changes with w.  
+then issue partprobe and come right back into fdisk.
+
+WITH A CLEAN DRIVE---
+n for new partition. 
+p for primary. 1.  
+whatever size.  
+t change type to b which is fat32.  
+a 1 to make it bootable.  
+w.  to write and quit. 
+partprobe to see your changes.  
+
+
+Format your new partition
+mkfs.vfat /dev/sdc1
+
+Install syslinux bootloader on it
+syslinux /dev/sdc1 
+
+
+Mount the ISO and copy over the files
+mount -o loop ks.20100603.iso /mnt/loop 
+cp -Rfa /mnt/loop/* /media/disk
+
+Rename isolinux.cfg to syslinux.cfg
+mv /media/disk/isolinux.cfg /media/disk/syslinux.cfg
+
+
+When booting off USB pen drive, the machine is to stupid to find the ks config files.  I think this has to do with device naming and how it could change on various machines.  We will be injecting our kickstart configs into our initrd images to work around this. 
+
+Extract the initrd images. 
+gunzip < initrd32.img > initrd32.raw
+gunzip < isolinux/initrd.img > initrd.raw
+
+
+
+Copy the kickstart configs to the uncompressed initrd images.  
+ls *cfg | cpio -oAO initrd32.raw -H newc
+ls *cfg | cpio -oAO initrd64.raw -H newc
+
+Re-compress the initrd images.  
+gzip -c initrd32.raw > initrd32.img
+gzip -c initrd64.raw > initrd64.img
+
+
+
+Update the syslinux.cfg.  Change the ks=cdrom to ks=file. Like this...
+ks=cdrom:/client32.cfg
+TO 
+ks=file:/client32.cfg
+
+
+
+Sync the drive.  Pull it and try it. 

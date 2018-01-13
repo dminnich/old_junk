@@ -1,0 +1,15 @@
+HOW TO TRANSFER QUOTAS FROM ONE MACHINE TO ANOTHER
+
+On the old server...
+Save the quotas:
+repquota -a | awk '{ print $1 " "  $4 " " $5}' > home_quotas
+remove the trash from the file.
+
+copy it to the new server
+
+On the new server...
+initialize quotas:
+quotacheck -vagum
+
+build the quotas:
+cat home_quotas | while read LINE; do setquota -u `echo ${LINE} | awk '{ print $1 }'` `echo ${LINE} | awk '{ print $2 }'` `echo ${LINE} | awk '{ print $3 }'` 0 0 -a; done

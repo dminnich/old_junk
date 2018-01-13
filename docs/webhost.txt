@@ -1,0 +1,566 @@
+How To Setup A Small ISP Web Server
+-------------------------------------------
+Have you ever signed up for an ISP that gave you webspace? How about gone to a college that gave you a place to put your own website?  These places usually offer  very basic hosting services.  Maybe 50 or so megabytes of space with no other hosting frills (ie: no PHP, no MySQL, no CGI, etc).  These hosts often use the http://www.address.com/~username website naming scheme.
+
+This howto will show you how to setup your own web server to accomplish this  exact same task. It will cover setting up the web server itself (apache), an FTP server (vsftpd), so your users can upload files, and quota management, so none of your users use more space than they should.  
+
+What this guide assumes:
+-You have a basic understanding of Linux. 
+-You have a basic understanding of how the internet works.  This includes server/client relationships domain name registration, etc.  
+
+Who this guide is for:
+-People that want to setup a web server for a small business/school/church/ISP or whatever.  
+-People who are just curious and want to learn more about Apache. 
+-Admins who have end users that do not need any advanced hosting features like PHP.  
+
+Who this guide is NOT for:
+-People who plan to setup a commercial web host.  First - This guide doesn't go into the setup of PHP, Python, Perl, MySQL, etc.  So I don't think anybody would pay for such a "crappy" service. Second - While I try to make this install as secure as possible, I don't know if its secure enough to be used in mission critical applications. Third - This guide doesn't go into deploying a user management back-end like LDAP.  So there is no easy way to have different settings per user.  
+-People with LOTS of users.  If you have more than 200-300 users the fact that each user has to have a machine account will get old fast.  Managing this many users will be a pain and migrating services to another server in the future could be a BIG hassle.  
+
+With all that said, lets get started......
+
+/////////////////////////////////////////
+                STEP ONE
+/////////////////////////////////////////
+
+Buy a server, a domain name and some good speed.
+I'm not going to help you much here.  
+
+If you are building a server check out newegg.com. If you are buying pre-built I know some people that have had good luck with Proliants. Just make sure its powerful enough to handle the load of how many users you will be hosting (good news, there is pretty much no accurate way to estimate this!).  
+
+Make sure the bandwidth you get from your ISP will be enough to handle the demands of your user hosted pages.  You need lots of upload bandwidth. There is pretty much no way to estimate how much bandwidth you will need either.  Also, make sure you get a static IP address.  To get what you need you may need to get a T1 or greater from the local telecoms or at least a business class account with your cable/dsl provider.
+
+Buy a domain from a registrar.  I've used active-domain.com before in the past and had no problems.  Plus its not gay like network solutions!
+
+/////////////////////////////////////////
+                STEP TWO
+/////////////////////////////////////////
+Download Cent OS.  
+Cent OS is a Red Hat Enterprise Linux clone.  Which means its secure, stable and "standard".  
+
+Go to centos.org > downloads > mirrors > choose the most recent version > choose your processor architecture > choose the one closet to you > download the ServerCD.  
+The choice for most people, at the time of this writing anyhow, should be CentOS-4.4.ServerCD-i386.iso.  
+
+Once its downloaded burn it to a disc.  Deep Burner is a good application for Windows if you need something that will burn ISOs.  
+
+
+/////////////////////////////////////////
+                STEP THREE
+/////////////////////////////////////////
+Time for the install.  
+
+If you are using a server with hardware RAID support go ahead and create your arrays.  This varies greatly between systems, see your documentation.  For non-critical user data I usually do RAID 1 on 2 drives for the OS, and RAID 0 for the rest of the drives that will house the users websites.
+
+Pop the CD in your server.  Make sure a keyboard, mouse, monitor and network cable are all hooked up, and hit the power button.  
+
+The computer should boot off the CD and you should see a Cent OS screen.  
+If your computer instead boots into an operating system you want to get rid of or says "boot disk not found" you need to restart the computer, go into the bios and change the Boot Order.  To get into the bios you usually hit F1 or F2 or F8 or F10 or Delete on the keyboard as soon as the machine turns on.  The initial screen will usually tell you.  Once you are in the bios look for something similar to "boot order" and make sure that CD is above hard drive.  Save your changes and exit.  
+
+
+At the Cent OS screen hit enter.  
+
+Hit OK > TEST to make sure the CD is in good shape.  Hit continue once it passes. 
+
+Once the real installer (anaconda) starts click next at the welcome screen.  Choose your language and click next.  Choose keyboard style, click next. 
+
+Choose manually partition and click next.  Set up the partitions the way you want them.  Click next.
+I usually do / and swap on two drives in a RAID 1 array.  And /home on all the extra drives in a RAID 0 array.  That way if something breaks at least the OS should stay in tact.  And the separation of / and /home is just in case I decide to switch distros or have to reinstall for some reason, that way the users won't loose their sites.  I use RAID0 on /home because I offer my service to people learning to code, and if they lost something it wouldn't be a disaster.  
+
+If you need to make any changes on the grub screen do it.  Then click next.
+
+On the network devices page click eth0 or whatever your adapter is and click edit.  Uncheck configure using DHCP.  Give it a static IP in your address range. Set the hostname to something useful like webhost.domain.  Put in your gateway address and your DNS server addresses and click next.  If you don't know these settings ask your network admin.  
+
+On the next screen choose enable firewall.  Put checks next to Web Server, SSH, and File Transfer.  Make sure enable SELinux is set to Active.  Click next.  
+
+Choose any additional languages you want.  Click next.  
+
+Choose your time zone, click next.
+
+Set your root password.  Make it hard to guess.  Click next.  
+
+Choose customize packages and click next.  
+
+The package selection screen appears.  
+This will be a *very* slimline install.... (customize it to your liking)
+-All desktops can be unchecked.  
+-Check editors and all editors from under details.  
+-Keep text-based internet checked. Go to details and uncheck cadaver and fetchmail unless you need them.   
+-Sound and video can stay unchecked.  
+-Click details for Server configuration tools.  Choose the top one config-httpd.  Check any others you may think you will want to use.  
+-Keep Web Server Checked.  Under details uncheck crypto-utils, distcache, mod_perl, mod_python, mod_ssl, php, php-ldap, squid unless you need them.
+-Uncheck Mail Server, unless you need it. 
+-Uncheck Windows File Server, unless you need it. 
+-Uncheck DNS Nasme Server, unless you need it. 
+-Keep FTP Server checked.
+-Keep Postgres, MySQL and Network Servers unchecked.  
+-Check Development Tools.  
+-Keep Gnome Software Development unchecked.  
+-Keep Administration Tools Checked.  
+-Keep System Tools unchecked.  
+-Uncheck Printing Support, unless you need it.  
+If you follow this exactly your install size should be 818Mb (assuming version 4.4 for i386). 
+Click next.  
+
+Click next to confirm the install. 
+
+Wait.
+
+Reboot.
+
+/////////////////////////////////////////
+                STEP FOUR
+/////////////////////////////////////////
+Updates and tweaks.  
+
+Login as root.  
+
+Lets go ahead and get all the distribution updates.  
+Issue: 
+-yum update
+Answer Y to any questions that pop up.
+
+Services are applications that start up when your computer starts up and usually run the entire time it is on. We can turn some of these off to save processing power. Only turn off what you won't be using. 
+Do a:
+-chkconfig --list | less
+Look for services that are turned "on" that you won't be using. Write them down.  Press "q" to exit less.  
+Issue:
+-chkconfig <service_name> off 
+for each one that you want to disable.  
+I chose to disable:
+nfslock,atd,cpuspeed,apmd,microcode_ctl,acpid,isdn,rpcidmapd,
+gpm,cups,sendmail,netfs,rpcgssd,autofs,anacron
+This assumes you will not be using ANY network file systems.  It also assumes you won't be using a printer or any type of power management. 
+
+You probably noticed that the two things we actually want to use were disabled by default.  
+So issue:
+-chkconfig <service_name> on 
+for each of the below services
+vsftpd,httpd
+
+Now lets get rid of a few cron jobs.  
+Issue:
+cd /etc/
+mkdir no.cron
+mv /etc/cron.daily/yum.cron /etc/no.cron/yum.cron.daily
+mv /etc/cron.daily/0anacron /etc/no.cron/0anacron.daily
+mv /etc/cron.monthly/0anacron /etc/no.cron/0anacron.monthly
+mv /etc/cron.weekly/yum.cron /etc/no.cron/yum.cron.weekly
+mv /etc/cron.weekly/0anacron /etc/no.cron/0anacron.weekly
+I personally don't like anacron (cron is sufficient enough for my needs).  And I don't like scripts managing something as delicate as software repositories.  So I choose to disable these services.  If you ever decide to use them in the future just move the scripts back to their original locations.  
+
+That's enough tweaking for now. Do the rest on your on!
+
+/////////////////////////////////////////
+                STEP FIVE
+/////////////////////////////////////////
+Apache setup.  
+
+Do:
+-cd /etc/httpd/conf.d/
+The files in this folder are configuration files that apache automatically parses at start up. With my default install the only things in this folder are manual.conf, webalizer.conf, and welcome.conf. 
+
+Lets stop apache from serving its documentation.  This will save bandwidth and create a slight bit more security.  If somebody just adds /manual/ to your domain and sees apache documentation they will then know you are running apache.  Then they can start looking for apache exploits. Granted they can tell you are running apache in several other ways, this just stops very very casual/lazy hackers. 
+-nano manual.conf
+Comment out everything in this file.  Meaning add a # in front of every line.  Save your changes. 
+
+Webalizer is an application that keeps statistics about all your visitors.  Since the webalizer configuration file only allows the server itself to access these statistics there is no reason to change anything.  
+
+Welcome.conf makes apache display a default start up page to visitors if index.htm is not found in /var/www/html.  While this page is nicer than a directory listing you most likely never want anybody to see this page.  It also tells visitors that you are running apache and Cent OS, thus giving them more info to search for exploits on.  Because of this we are going to do the same thing to welcome.conf that we did to manual.conf.  Open it up 
+-nano welcome.conf
+Comment everything out, and save it.  
+
+Now its time for the big file
+-cd ..
+-cd conf
+-nano httpd.conf
+Set:
+ServerTokens Prod
+This will hide some information about your server. The less people on the outside know about your server the harder it is for them to exploit it.  
+
+No reason to change ServerRoot or PidFile.  
+
+The Timeout,KeepAlive, and MPM options are for performance tuning.  The defaults usually do a good job.  If you have special needs, adjust these settings to fit them.  
+
+Listen lets you choose what port you want apache to listen on.  
+80 is the default and should be used unless your ISP blocks that port. 
+
+Since we are running a *very* basic web server we can disable a lot of the modules.  This will increase security and speed.  We disable them by placing a # in front of the LoadModule command.  Below is a list of the modules you should see with brief descriptions.  If a # is in front of them you should add that to your config file, unless you plan to use that feature. 
+
+mod_access- allows and denies people based on IP and other things.  This is needed for webalizer. 
+#mod_auth- allows and denies people based on usernames and passwords.  Not necessary for our all public server. 
+#mod_auth_anon- allows authenticating anonymous people. 
+#mod_auth_db- allows authenticating against a database
+#mod_auth_digest- allows authenticating with MD5 technology
+#mod_ldap- allows apache to use LDAP
+#mod_auth_ldap- allows authenticating against an LDAP source
+#mod_include- Server Side Include support.
+mod_log_config- allows you to customize log files.  No harm here. 
+#mod_env- Allows you to modify the environment passed to CGI and SSI.
+mod_mime_magic- Apache uses this to figure out what type of files its working with. 
+mod_cern_meta- Influence expire headers. Not sure what it does.  Keep it.
+mod_expires- Controls the expiring of pages.  
+mod_deflate- Compressing content before sending it. 
+#mod_headers- Allows you to modify headers.  Not used widely.
+#mod_usertrack- Uses cookies to track users. Not used widely.
+#mod_setenvif- Allows setting of environment variables.  Shouldn't be needed on our site.  
+mod_mime- Allows apache to figure out file types. 
+#mod_dav- WebDAV.  Not needed on our site. 
+#mod_status- Gives extended server information out.  Not needed.
+#mod_autoindex- Don't allow directory listings to be generated. This is a personal choice really.  
+#mod_asis- Send files with embedded headers not adding any more. Not used widely.  
+#mod_info- Gives out server configuration information.  Not needed.
+#mod_dav_fs- WebDAV.  Not needed on our site. 
+#mod_vhost_alias- Mass domain virtual hosting. We won't be using vhosts.  
+#mod_negotiation- Good idea, but to complicated for actual use.
+mod_dir- Needed for basic usage. 
+mod_imap- Image map support.  Users might actually use this.  
+#mod_actions- Actions for CGI scripts. We don't want CGI.
+#mod_speling- Tries to fix URL spelling issues.  Off, it can create unexpected results. 
+mod_userdir- The main thing we will be using.  Allowing all machine accounts to host their own site.
+mod_alias- Use directories not in /var/www/html in your site.  Needed for webalizer.  
+#mod_rewrite- Allows apache to modify the URL requests it gets. Shouldn't be needed with our site.  
+#mod_proxy- We don't want to use apache as a proxy server. 
+#mod_proxy_ftp- We don't want to use apache as a proxy server.
+#mod_proxy_http- We don't want to use apache as a proxy server.
+#mod_proxy_connect- We don't want to use apache as a proxy server.
+mod_cache- Cache data for faster delivery. 
+#mod_suexec- Run CGI scripts as...  We aren't using CGI.
+mod_disk_cache- Cache data for faster delivery.
+mod_file_cache- Cache data for faster delivery.
+mod_mem_cache- Cache data for faster delivery.
+#mod_cgi- No CGI.  To risky in my opinion.  
+
+The next few settings are fine.  Jump down to ServerAdmin change root@localhost to a valid email address you own.  
+
+Change ServerName to be www.yourdomain.com:80
+
+UseCanonicalName should stay off for most people.  
+
+DocumentRoot is where the main website will be.  In other words, where the site about the webhosting project we be located, not the actual user websites.  /var/www/html should be fine.  
+
+Next comes the default Directory options.  These get applied to any directories that aren't specifically defined in this config file. We want this to be very restrictive and we don't need many options to begin with so lets set it up like this:
+<Directory />
+Options None
+AllowOverride None.  
+</Directory>
+
+<Directory "/var/www/html"> holds the options for the main site you will be administering.  Once again, I don't need any special features, so I'm going to turn them all off.  
+Options None
+AllowOverride None.
+The Order statements should be fine.  
+
+UserDir - THE thing we are interested in. 
+Set:
+UserDir disabled root (space separated list of users who userdir will not work for. feel free to add more system accounts or "very private" accounts here.)
+UserDir public_html
+<Directory /home/*/public_html> These are the directory options for your users.  They need to be *very* restrictive.  Uncomment everything.  
+AllowOverride None (no .htaccess file parsing allowed)
+Options None       (no CGI, SSI, Directory listing, etc)
+Remove all the limit definitions.  
+Since we won't be allowing our users to setup username/password protected directories we don't need to "limit" which request headers they authenticate in.  
+Add:
+Order allow,deny
+Allow from all
+This will allow everyone to see your users files.  
+
+To summarize:
+UserDir disabled root
+UserDir public_html
+<Directory /home/*/public_html>
+AllowOverride None
+Options None
+Order allow,deny
+Allow from all
+</Directory>
+
+DirectoryIndex is the default files to display when somebody chooses to go to a directory.  I usually make mine look like this:
+
+DirectoryIndex index.htm index.html default.htm default.html index.html.var
+because I seem to remember some weird webserver using default.html in the past.  
+
+AccessFileName doesn't need to be changed because our users won't be able to (use .htaccess files) change any settings on their own because we set AllowOverride to NONE.  
+
+Files,TypesConfig,DefaultType,MIMEMagic,HostnameLookups,EnableMMAP,
+EnableSendfile,ErrorLog,LogLevel,LogFormat,CustomLog can all stay the same.  If you want your logs to be different or if you serve pages from NFS mounts you may need to change some of those settings.  
+
+Set ServerSignature to Off.  This will stop Apache from telling people what version of Apache you are using.  
+
+Since I don't allow directory listings I also comment out the Alias and Directory definitions for the icons.  
+
+Comment out WebDAV if you don't plan on using it.  
+
+I comment out ScriptAlias and the Directory definition for the cgi-bin since I don't use it.  
+
+The Redirect line is fine commented out. 
+
+Since I don't allow automatically created directory indexes I comment out IndexOptions and all the AddIconByType, AddIconByEncoding, AddIcon, DefaultIcon, AddDescription, ReadmeName, HeaderName, and IndexIgnore lines.
+
+Comment out LanguagePriority and ForceLanguagePriority. The rest of the language and charset stuff should be fine unless you deal with a lot of international stuff.  
+
+Most of the AddEncoding, AddType, and the AddHandler lines can be commented out.  Unless you plan to use them.  I keep AddHandler imap-file map and AddHandler type-map var and comment out the rest.  
+
+I also comment out the AddOutputFilter line to disable Server Side Includes. Keep it if you plan on using them.
+
+I don't like internationalized or special error messages.  They look nice but they also quickly let people know you are using Apache.  
+I usually comment out from the Alias /error/ line to the 2nd </IfModule> line. 
+Then I go back to all the ErrorDocumet declarations made a few lines above and make my own like this:
+
+ErrorDocument 400 "Error 400. You made a bad request. Please try again."
+...
+ErrorDocument 404 "Error 404. File not found."
+...
+ErrorDocument 500 "Error 500. The server made an error."
+...
+Come up with your own! Go here (http://www.w3.org/Protocols/rfc2616/rfc2616-sec10.html)  for help.  
+**Note: These do support HTML so feel free to use <br>'s and <h1>'s and what not to make them look better.  I simply don't care.   
+
+I comment out all of the BrowserMatch definitions.  I find that it is very rare that people actually use these pieces of software (because they are so old). 
+
+We should keep everything else in the file commented out.  This includes the Location(s), the Proxy stuff, the caching stuff, the module stuff, and the virtual hosting stuff.  
+
+
+Make sure all of your options are on one line.  Apache doesn't like to have options defined on multiple lines.  
+Save your changes (CTRL-O).
+Exit nano.  (CTRL-X). 
+Restart Apache.  /etc/init.d/httpd restart. 
+Issue 
+-tail /var/log/messages
+to make sure apache started without any problems. Once you see this is the case you can continue on to the next section.  
+
+
+/////////////////////////////////////////
+                STEP SIX
+/////////////////////////////////////////
+VSFTPD setup.  
+
+Time for the FTP server baby!
+
+First a security measure.  VSFTPD has a user list that it always denies FTP connections from.  Lets add all of our system users to that list.  
+-cat /dev/null > /etc/vsftd.ftpusers
+Erase everything that is currently in the list.  
+-awk -F":" '{print $1}' /etc/passwd>>/etc/vsftpd.ftpusers
+Insert every user in passwd into the list.  Since we haven't created any webhosting users yet this should just deny all system accounts.  If you have already created some users that will want FTP access you will have to edit the file manually and remove their names.  
+
+Lets get to the config file.  
+-nano /etc/vsftpd/vsftpd.conf
+**Note: *'s will be used below as wildcards. They evaluate to multiple directives that are in a row.  
+
+Set:
+anonymous_enable=NO  (we are not hosting a public FTP server)
+local_enable=YES     (allow people with system accounts, our users, to log in)
+write_enable=YES     (needed to allow people to upload files)
+local_umask=022      (thats fine)
+#anon_mkdir_write_enable (keep it commented out)
+dirmessage_enable=YES     (show people messages when they change directories.)
+xferlog_enable=NO     (logging each transfer is a lot of wasted space and effort)
+connect_from_port_20=YES (prevent spoofing?)
+...the next few chown and xferlog stuff can be left alone...
+idle_session_timeout=240  (disconnect idle users after 4 minutes.  We don't need campers.)
+data_connection_timeout=120   (2 minutes is a reasonable value for a stalled transfer)
+#nonpriv_user=ftpsecure       (default is fine)
+#async_abor_enable=YES        (thats fine)
+#ascii_*                     (both are fine)
+ftpd_banner=Welcome to <YOUR_ORG>'s FTP server.    (or whatever you want)
+#*_email_*                    (both defaults are fine. we don't need to deny emails yet)
+...keep chroot_list_enable and chroot_list_file commented out... then ADD:
+chroot_local_user=YES
+#ls_recursive_enable=YES    (thats fine.  we don't need people listing long directories.)
+pam_service_name=vsftpd     (needed to look up users)
+userlist_enable=YES         (needed to block all those users we added to that file earlier)
+listen=YES                  (turn on standalone mode)
+tcp_wrappers=YES            (allow use of hosts.allow and whatnot)
+...ADD the following....
+local_root=public_html  (put users in their public_html folder after chroot_local_user locks them in home)
+userlist_file=/etc/vsftpd.ftpusers   (denies login attempts from the users in this file)
+accept_timeout=60        (allow 60 seconds to establish a PASV data connection)
+connect_timeout=60       (allow 60 seconds to establish a PORT data connection)
+check_shell=YES          (make sure each user has a valid shell listed in /etc/shells)
+setproctitle_enable=YES   (display the status of transfers in "ps aux" set to NO if the server is a multi-user workstation as well)
+max_per_ip=3             (limit one person to 3 active connections to the FTP server at one time.  This prevents greedy users from hammering the server.)
+max_clients=0            (if you want to limit how many people connect to your ftp server at one time you can do it here.)
+pasv_address=YOURIP     (the IP address the server sends back to clients when they connect passively.  set it to the static IP your ISP gave you.) 
+pasv_enable=YES         (allow passive connections)
+port_enable=YES          (allow normal/port connections)
+pasv_min_port=2000          (the starting open passive port on the server.)
+pasv_max_port=2010          (the ending open passive port on the server)
+**Note: There needs to be enough passive ports for all your users.  One port can handle connections from more than one client at a time. Therefore 10 or so ports should be fine.  These ports must be between 1024 and 49151 and must not be in use by other servers on your network. I choose mine randomly, you may need to alter them in your case. Also, we need to open these ports on the servers software firewall as well as on any hardware router you are using.  Thanks (http://forums.rhinosoft.com/showthread.php?t=248)
+
+Make sure all of your options are on one line with no spaces between ='s.  
+Save your changes (CTRL-O).
+Exit nano.  (CTRL-X). 
+Restart vsftpd.  /etc/init.d/vsftpd restart. 
+Issue 
+-tail /var/log/messages
+to make sure vsftpd started without any problems. Once you see this is the case you can continue on to the next section.  
+
+
+/////////////////////////////////////////
+                STEP SEVEN
+/////////////////////////////////////////
+Group and user creation. Quotas. Skel directory.
+
+First lets enable quotas.  This takes quite a bit of work.  (Thanks linuxhomenetworking.com)
+-init 1
+This takes you to single user mode. You can't enable quotas if people are using the machine. 
+-nano /etc/fstab
+Change 
+LABEL=/home       /home          ext3    defaults           1 2
+to 
+LABEL=/home       /home          ext3    defaults,usrquota  1 2
+This enables quotas on the /home filesystem.  
+-CTRL-O  
+Save Changes.
+-CTRL-X
+Exit nano.  
+-mount -o remount /home
+Go ahead and make the quotas active this boot.  Since fstab is processed at boot.  
+-init 3
+Go back to multi-user mode.  
+-touch /home/aquota.user
+-chmod 600 /home/aquota.user
+The root filesystem with the quota needs a file (that's not writable/readable by everyone) to store user quota information in. The above commands create that file. 
+-quotacheck -vagum
+The quota manager needs to index the amount of data already in the filesystem.  The above command tells it to do this.  You will get an error, this is normal. 
+Quotas should now be enabled.  
+
+The Skel directory contains files that you want to have copied to each newly created users home directory.  Lets create some files in it.  
+-cd /etc/skel
+-mkdir public_html 
+This folder is where your users will store their web pages.  
+-cd public_html
+Now we need to create a default index.html.  This page will be displayed when someone has created an account but has not yet uploaded any of their own content.  
+-nano index.html
+Make your own or copy and paste this.
+<html>
+<head>
+<title>This user currently has no content.</title>
+</head>
+<body>
+<p>The user who created this account has not yet published any of their own content.  </p>
+<p>If you recently registered this account please upload your own index.html over top of this one.  If you don't know where to get started please read the FAQ on the main page. </p>
+<br />
+<br />
+<br />
+<p>To get your own free web hosting go <a href="../">here.</a>
+</body>
+</html>
+-CTRL-O
+-CTRL-X
+-cd ..
+-chmod -Rf 755 public_html
+This will give each new user full access to change their files and will give everybody else read access to the stuff in public_html.
+That should be everything we need to do in the skel directory.  
+
+Now lets create a webpage for the hosting project itself.  This will be your main page, the one people see when they go to www.yourdomain.com.  It should tell about your project and give viewers a way to request your services.  
+-cd /var/www/html
+-nano index.html
+Make your own.  Or copy and paste this.  
+<html>
+<head>
+<title>Free No-Frills Web Hosting!</title>
+</head>
+<body>
+<h2>Welcome to Free No-Frills Web Hosting!</h2>
+<p>This site plans to offer very basic web hosting services to a select group of people for free.</p>
+<p>Features include: 50MB of storage, FTP access, no individual file size limitation, no bandwidth monitoring, and the ability to hot link things.  All of this is hosted on a reliable server, and its FREE. </p>
+<p>Features this does *NOT* include: PHP, CGI, SSI, Ruby, Python, Cron jobs, Email, Mailing Lists, ASP, CVS, MySQL, SSH access, canned scripts, site editors, unique IP addresses, SSL, domain and subdomain hosting, Frontpage extensions, statistics, the ability to list directories of files, the ability to password protect content, backups of your data, a guaranteed amount of uptime, etc.</p>
+<p>In other words this site is perfect for people that are just starting to learn HTML or people that only need very basic static web pages (families, employment portfolios, personal sites, software developers, writers, artists, etc). If you need anything else, you are probably better off paying for web hosting.  Dreamhost is a nice place to start looking. </p>
+<p>If you would like to apply for an account, send an email to user@domain.com. Please make the subject "Account Request" and in the body explain to me what you will be using the site for.  If I think it is a good use of my server space and bandwidth I will create you an account and email you all the information you need to use it. </p>
+</body>
+</html> 
+**Note: You will probably want a much more elaborate page than that.  Maybe even one with a CGI form that does all the user creation work for you!  Other good ideas include: a FAQ with how to use FTP client instructions, more information on your project/company, links to your other sites, as well as more detailed descriptions about what features they will get when they sign up. 
+
+Lets create a group the holds all of our hosted users.  That way we can manage them better in the future. Issue 
+-groupadd hosted
+
+Now lets create a script that will allow us to easily create users in the future.  
+-cd /sbin/
+-nano useradd2
+Copy and paste what you see below.  
+
+#!/bin/sh
+echo "Creating user $1..."
+useradd -n -g hosted -m -s /sbin/nologin $1 
+echo "chmoding home directory..."
+chmod 711 /home/$1
+echo "Changing selinux permissions..."
+chcon -t httpd_sys_content_t -R /home/$1/public_html
+echo "Please set $1's password..."
+passwd $1
+setquota -u $1 51200 54272 0 0 -a
+echo "Quota set to 50MB..."
+echo "$1's account is now fully setup."
+
+Save the script and exit.  
+-chmod +x useradd2
+This will allow root to run the script.
+Now whenever you want to create an account (for someone who wants webhosting) you will issue
+-useradd2 <username_they_want> 
+Replace <username_they_want> with whatever they want their pages URL to be.  IE: bill would be www.yourdomain.com/~bill.  
+
+Script EXPLAINED (just in case you are wondering):
+ -useradd - creates users (duh)
+  -n Don't create a group just for that user. 
+  -g Add the user to the hosted group we created.
+  -m Create the users home directory if needed.  
+  -s Set the users shell to a false one.  So they won't have SSH access, even if they try.
+  -$1 the first variable after useradd2.  The "name" you type after useradd2. 
+ -chmod.  By default only the user created has the executable (searchable, drill down) bit set.  We need the default permissions to be 711 so apache can go into their home folders and serve their documents. 
+ -chcon By default selinux does not allow apache to go inside of users home directories and serve files even if UserDir is enabled and the folders have 711 (or greater) permissions. Running this command on each users public_html folder bypasses this selinux security measure. Thanks (http://www.astahost.com/info.php/configuring-apache-fedora-core-3-userdir_t3659.html)
+ -passwd set the password.  
+ -setquota enables our quota for the user.  
+   -u The user to set the quota for.  
+   -51200 soft limit of 50MB or 51200kb. 
+   -54272 hard limit of 53MB or 54272kb. 
+   -0,0 no inode limits.  
+   -a on all filesystems that support quota in mtab.
+
+
+**Note: You may want to create a test account with useradd2.  Then go to their home directory and issue a ls -lha to make sure the skel files came over and to make sure they have the right owners and permissions.  
+
+/////////////////////////////////////////
+                STEP EIGHT
+/////////////////////////////////////////
+Network setup.
+
+Log in to your registrar and make an "A record" for your domain that points to the static IP that your ISP provided you with.  This will allow your users to go to yourdomain.com/~their_name to see their pages and will allow them to use yourdomain.com as the host in their FTP clients.  
+
+Since we enabled the software firewall on the server we now have to open some ports to let people access the FTP and web services.
+-nano /etc/sysconfig/iptables
+Find the line that reads 
+-A RH-Firewall-1-INPUT -m state --state NEW -m tcp -p tcp --dport 21 -j ACCEPT
+change it to 
+-A RH-Firewall-1-INPUT -m state --state NEW -m tcp -p tcp --dport 20:21 -j ACCEPT
+This will allow the control connection for PORT FTP sessions.  
+Make a copy of that line and paste it right below the 20:21 line.  Make the new copy look like
+-A RH-Firewall-1-INPUT -m state --state NEW -m tcp -p tcp --dport 2000:2010 -j ACCEPT
+This will allow the FTP passive connections.  
+-CTRL-O  
+Save Changes.
+-CTRL-X
+Exit nano.  
+-/etc/init.d/iptables restart
+Restart iptables so all the changes will take affect.  
+
+
+If your server is behind a hardware firewall you need to create port forwarding rules on that firewall.  That way when people try to access port 80,20,21,2000-2010 and 22(if you want to ssh from outside your network) on your static external IP (or domain) the firewall will allow it to happen and will send all the traffic to your server.  If you don't know how to do this step, look in your routers documentation or talk to your network administrator. 
+
+/////////////////////////////////////////
+                STEP NINE
+/////////////////////////////////////////
+Testing.  
+
+Reboot your server (shutdown -r now)!  Make sure all the changes take affect at boot.  
+
+Create a test account using the useradd2 script.  
+-useradd2 test
+
+Go to the test accounts page to make sure the SKEL directory worked.  In other words open up a browser and go to yourdomain.com/~test/.  If you see the default page you created you know that your domain, your port forwarding, your user creation, and apache is working.  
+
+Go to www.net2ftp.com.  Log in using the test accounts info. Upload some files.  Make sure they show up on the page.  Try logging in in both modes active and passive.  If everything works you know vsftpd is working.  
+
+Finally try to upload a file that is larger than your quota.  Just to make sure the server doesn't allow it.  
+
+
+That's it!  
+Congrats on having your own server.  

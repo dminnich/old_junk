@@ -1,0 +1,124 @@
+Prereq:
+Install:
+lsdvd, libdvdread,libdvdcss,xine,mplayer,lxdvd,streamanalyze, dvdbackkup,streamdvd,xdvdshrink, transcode, ffmpeg, mpeg2dec, dvdauthor, libdvdnav,subtitleripper, k3b, dvd+rw tools, faac, libmpeg3 faad2,libmpeg2,mjpegtools, mkisofs,cdrecord,cdrdao, cdrtools, vcdimage, mencoder, libdvdread-devel, tovid
+
+You may not need all of these.  
+Also, you may need to install some of these by hand compling them. This is because a lot of official distro repositories don't carry the "full" versions because of copywright/patent and DMCA issues. 
+
+Other media packages prolly wanted:
+mad, xvid4conf, divx4linux, xvid, vlc, w32codecs,realplayer,libquicktime, amarok, emovix, normalize.
+
+make sure you can play DVDs and movies with xine. Make sure lsdvd and tcprobe show that it uses libdvdcss to handle encryption. 
+
+ALSO WORTH NOTING:
+Below are some cool applications not descriped here.
+dvd::rip
+mencoder
+acid rip
+
+
+INTRO:
+
+Lots of commercial DVDs are small enough to fit onto one DVDR already. These DVD's are single layered and the entire DVD can be backed up to a standard DVDR with NO quality loss.  
+
+In other cases the feature movie may be small enough to backup to a standard DVDR with no quality loss.  In other words, the standard film may be less than 4.5Gb. The rest of the space on the commerical dual-layer DVD is taken up by (worthless) extras.  
+
+In still other cases the main movie itself may be to larger than 4.5Gb.  When this happens the movie most be transcoded so it can fit onto a standard DVDR.  
+
+Therefore this howto goes through the following motions to ensure maximum quality.  
+I. Backup the whole DVD without compression if possible.  If not....
+II.Backup the main movie without compression if possible. If not...
+III. Backup the main movie with only one audio stream without compression if possible.  If not...
+IV.Backup the main movie and one audio stream compressing it as little as possible. 
+
+
+A: 
+DETERMINE IF THERE IS A REASON TO TRANSCODE OR COMPRESS THE MOVIE TO FIT ON 1 SINGLE LAYER DVDR
+
+To see if the whole DVD can fit on a standard DVDR do this:
+1)dvd+rw-mediainfo /dev/dvd  
+2)look at the READ CAPACITY
+if it is less than 4500000000
+you can backup the whole DVD using dvdbackup -M
+--Continue onto B1.--
+
+To see if the main movie will fit onto a standard DVDR:
+1)do lsdvd -x
+2)Find the main title you want to backup. This is usually the longest and has the most chapters. 
+3)Use streamanalyze: (below /dev/dvd is input and title 12)
+streamanalyze -i /dev/dvd -t 12  
+3)Look at Factor.
+If it says "not needed" the film itself can fit on a standard DVDR without transcoding.  If this is the case use dvdbackup -F
+--Continue onto B2.-- 
+
+If the Factor lists a number transcoding will be necessary.  
+--Continue onto C--
+
+
+TO SINGLE LAYER WITH NO TRANSCODING
+B1: 
+1)Run dvdbackup with the mirror option.
+dvdbackup -v10 -M -i/dev/dvd -o/storage/movies/  
+ 2) Burn the dvd using K3B.
+
+B2:
+1)Run dvdbackup with the feature option. 
+dvdbackup -v10 -F -i/dev/dvd -o/storage/movies/  
+2) Burn the dvd using K3B
+ 
+-v10 sets the verbosity.  -F = feature.  -M = mirror whole DVD.  -i = input. -o = output.  THERE ARE NO SPACES with i and o. 
+
+
+C:
+TO SINGLE LAYER DVDR WITH TRANSCODING
+Prereq:
+Setup lxdvdrip to be in english.  vim /etc/lxdvdrip.conf.   Change language from de to en.  Save and quit. 
+C1:
+1)Use lsdvd (Repeated here for convience)
+lsdvd -x  
+Find the longest title for the movie.  Or guess by time and chapters at whatever it is you want to rip. 
+2)Use streamanalyze to further analyze your streams. 
+streamanalyze -i /dev/dvd -t 12 -s 0xe0,0x80 
+Above will analyze title 12 with the first audio stream..  The first video stream is always 0xe0 (?).  The audio stream can be chosen by examining the lsdvd -x output.  Usually the first audio track is the 6 channel english one.  So the 0xe0,0x80 is usually the right options to choose.
+
+Look at the FACTOR statement.  If it says "not needed" it means that the main movie with just the one audio stream can fit onto a standard DVDR without being transcoded.  
+
+NOTE: The stream choices are what makes this different from what we did before.  dvdbackup does not support choosing streams, therefore this extra step is added for lxdvdrip.  If you are confused re-read everything, it will make sense eventually.
+
+If factor is not need continue reading below.  If the factor is a number skip to section C2. 
+
+3) lxdvdrip -t=(title track of main movie. obtained using lsdvd) -fv=(output directory)
+for example: 
+lxdvdrip -t=12 -fv=/storage/movies/
+4)Either use the other lxdvdrip switches not discussed here or answer the questions as prompted.  IE: What audio track. 
+5) Burn with k3b.
+
+ 
+C2: 
+1) Rip using lxdvdrip.
+lxdvdrip -t=(title track of main movie. obtained using lsdvd) -f=(factor obatined using streamanalyze) -fv=(output directory)
+for example: 
+lxdvdrip -t=12 -f=1.186 -fv=/storage/movies/
+2) Either use the other lxdvdrip switches not discussed here or answer the questions as prompted.  IE: What audio track. 
+3) Burn with k3b.
+
+NOTE:  lxdvdrip only rips one audio stream by default.  Make sure you choose the same one you ananlyzed with streamanalyze. 
+
+THATS IT!
+
+
+---------------------------------------------------------------------------------------------------------------------------------------------------------
+More advanced stuff can be done.  For instance, ripping the main movie with only 1 audio track can sometimes make the feature film be small enough to fit onto a standard DVDR without being transcoded.  Basic steps for this are below.
+
+1)lsdvd -x  
+2)find the longest title for the movie.  Or guess by time and chapters at whatever it is you want to rip. 
+3)Use streamanalyze
+streamanalyze -i /dev/dvd -t 12 -s 0xe0,0x80 
+Above will analyze title 12 with the first audio track..  The first video track is always 0xe0 (?).  The audio track can be chosen by examining the lsdvd -x output.  Usually the first audio track is the 6 channel english one.  So the 0xe0,0x80 is usually the right options to choose.  
+
+If the streamanalyze FACTOR says "not needed" you can backup the main movie and the first audio track without doing any transcoding using the following command.  
+
+4)
+
+If factor shows a number you will have to transcode. However, you can get better video quality by leaving out some of those audio tracks. In other words....Go back to C and modify it how you see fit.
+

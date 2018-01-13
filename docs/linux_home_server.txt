@@ -1,0 +1,746 @@
+Linux Home Server How To
+
+What / Why:
+Over the years my needs for server applications on my home network have grown more and more complex.  I used to address this issue by taking machines that nobody wanted anymore and turning them into my own single purpose driven servers.  I had one box running squid for web proxying, one box doing FTP and apache, one box doing DNS and MySQL, one box doing samba and NFS, etc.  While this was a logical and secure approach it had its drawbacks.  The hardware was slow and often times failed, and it took several hours to setup each box.  None of these drawbacks bothered me nearly as much as the other side effects of this approach though--increased power consumption accompanied with more dissipated heat overall.  So, when I recently moved into a new fairly small apartment I decided it was time for a network re-vamp.  The first thing I decided I was going to do was combine all of these boxes into one.  I bought some new hardware: an Asus Terminator C3 -- total cost with mobo, case, processor, cdrom, RAM - around 150. As a bonus this machine is very small, quiet, and doesn’t consume much power.  Now that we have the hardware and the reasoning (for why I’m using a “less secure” / “less efficient” setup)  lets get started!
+
+
+This guide will go into the following.
+1) Setting up an SSH server so you can access your sever and your network from the outside world. 
+2) Setting up Squid with ad blocking.  This way browsing frequently visited websites on your LAN will load quicker. 
+3) Setting up a BIND DNS caching server.  This will speed up DNS resolution time on your LAN.  
+4) Setting up a public (read only) and a private (writable) NFS share.
+5) Setting up a public (read only) and a private (writable) Samba share.
+6) Setting up a public (read only) and a private (writable) FTP share.
+7) Setting up a public (read only) and a private (wider access) web based share.
+8) Setting up a public Cups and Samba printer share.  
+9) Setting up a time server so all the machines in your LAN will have the same time.  
+
+When we are done you will be able to access all of your files anywhere in the world using a host of different protocols.  Guests will be able to access files that you designate as being ok (by putting them in a specific folder) using a host of different protocols.  And the computers on your LAN will have better internet performance.  
+
+
+PREREQ:
+QUICK NOTE: ALL COMMANDS IN THS GUIDE ARE TO BE ISSUED AS ROOT.
+
+Buy your hardware.  
+Download and burn Cent OS 4.4.  
+Install this on your hardware.  
+
+-Suggested install options: If you are using the hardware I am--Otherwise do something similar. 
+Cent OS 5 currently does not support Via C3 (or any 586?).  Server CD does not have the alternate i586 kernel available at boot time.  
+Get the first CD of Cent OS 4.4  We will install what we need from it and YUM everything else we need.  
+Boot using “i586” at the boot prompt.  
+Do a custom install.  
+Create a 200Mb /boot partition using ext3. 
+Create Amount Of RAMx2 swap partition.  
+Create a 10Gb / partition using ext3. 
+Use the rest of the space to make a /files partition using ext3.  (This will be broken up into public and private shares later). 
+Give it a static IP you will remember that is in your LAN range.  I will be using 192.168.1.123.
+Give it a hostname. Mine will be “Slave“.
+Make its DNS servers be the ones your ISP uses.  
+Disable firewall and SELinux.  I won’t be sharing any mission critical information, and I don’t want to jump through any extra setup hoops.
+Choose a minimal install.  We will Yum everything else we need.  
+
+Tweaks:
+Disable some services “chkconfig <service name> off“.  I disabled the following (anacron, PCMCIA, openibd, cpuspeed, autofs, isdn, Haldaemon, acpid, gpm, irqbalance, sendmail,  mdmonitor, microcode_ctl, rawdevices, atd, kudzu, iptables, apmd. )
+Remove some cron jobs you don’t need.  -cd /etc/cron….  rm 0.…
+Hdparm your drive. 
+Yum update. 
+
+System Setup
+Create a “pub” folder in your /files partition.  
+-cd /files
+-mkdir pub
+
+Create a “private” folder in your /files partition.
+-cd /files
+-mkdir private
+
+Create a symbolic link in your private folder to your public folder. This will allow us to bypass some permissions inheritance folder setup issues we would otherwise experience in apache and samba.  
+-cd /files/private
+-ln -s ../pub/ pub
+
+Create an “anon” user.  He will be used for the samba public share.  And Anonymous FTP uploads if you enable that.     
+-useradd anon
+-vim /etc/passwd
+Change anon’s shell from /bin/bash to /sbin/nologin (this will prevent any ssh attempts from this user)
+Save and exit.  
+Now lets setup the default umask for the user we just created.  This will set the default new file permissions for files created by anon.  I believe this is only used for local logins; but lets set it anyways, just in case a server daemon wants to use it.  
+-vim /home/anon/.bashrc
+umask 000
+Save and exit.  
+
+Create a “private” user and group.  This will be the person that does all samba operations inside of the private folder. It will also be the group that all private samba users need to be a part of and eventually who all the private files are owned by.  
+-useradd private
+-vim /etc/passwd
+Change private’s shell from /bin/bash to /sbin/nologin (this will prevent any ssh attempts from this user)
+Save and exit. 
+Now lets setup the default umask for the user we just created.  This will set the default new file permissions for files created by private.  I believe this is only used for local logins; but lets set it anyways, just in case a server daemon wants to use it.  
+-vim /home/private/.bashrc
+umask 002
+Save and exit.  
+
+Add the private user to the anon group.  This will allow authenticated samba users to do stuff inside the symlinked public folder. 
+-vim /etc/group
+find anon and add private after the final :.  
+Save and quit. 
+
+Create your first private user:
+-useradd <username> -g private -G anon
+-passwd <username>
+
+To ensure that file access rights are kept proper across all file sharing protocols we will be implementing lax security and a really basic shell script.  The end goal will be that anybody in the private group will be able to create, delete, and edit files created by anybody else in the private or public group no matter what protocol each one is using.  Everything in the public folder will be owned by anon for consistency and will be world writable, but vsftpd and samba will stop these writes from happening.  Believe it or not, this is a rather big challenge that requires lots of forethought and creative use of umasks in the server applications.  The shell script below will make sure everything stays straight.
+
+-vim /etc/permissions
+#!/bin/sh
+#Force private to own all files in private.
+chown -Rf private:private /files/private
+#Force private ownership of the folder too
+chown private:private /files/private
+#Force user and group full access on the private files.
+chmod -Rf 771 /files/private
+#Force anon to own all files in pub.
+chown -Rf anon:anon /files/pub
+#Force everyone to have *full* access to the public files.
+chmod -Rf 777 /files/pub
+#Force anon ownership of the folder too
+chown anon:anon /files/pub
+#Make sure the /files/pub isn't world writable. Otherwise vsftpd complains.
+chmod 774 /files/pub
+#Make sure the /files/private dir isn't world writeable but is executable.
+chmod 775 /files/private
+#Set the gid bit on the folders to force the group owner of the files to be private/anon.
+chmod g+s /files/private
+#chmod g+s /files/pub  #not needed currently
+
+
+Save this file.  
+
+Make it executable:
+-chmod +x /etc/permissions
+
+Run it the first time:
+-/etc/permissions
+
+Set this script up to run every hour:
+-crontab -e
+0 * * * * /etc/permissions&
+Save and close this file.  
+ 
+
+
+NTPD
+Setting up a time server is a pretty simple task, that is why we will start with it. 
+
+Install:
+-yum install ntp
+
+Set to start at boot:
+-chkconfig ntpd on
+
+Configure:
+-vim /etc/ntp.com
+-Uncomment out the “restrict” line under “Client Network”.  Modify this line so it will match up with your LAN.  
+Save.
+
+Restart NTP:
+-/etc/init.d/ntpd restart
+
+Monitor:
+-tail -f /var/log/messages. 
+Make sure you see some synchronized to lines.  
+
+Testing:
+-date 
+Shows time on the server. Compare to watch.  
+
+Internet access setup:
+-We won’t be doing this.  
+
+Testing LAN access: 
+-Windows box.  Set time wrong.  Choose Internet Time.  Enter your servers LAN IP (192.168.1.123).  Update Now. Apply, Ok.  If it gives you an error, just click ok, close out of the box and walk away.  When you come back the time should be synced.  This can take hours, not sure why.  
+
+
+SSHD
+SSH will allow you to control this server through a virtual console from anywhere.  It is installed by default.  Lets make a some configuration changes.  
+
+Set to start at boot:
+-chkconfig sshd on
+
+-vim /etc/ssh/ssd_config
+Update the following lines (descriptions follow in parentheses) :
+Protocol 2   (you shouldn’t be using any client that requires 1)
+PermitRootLogin  yes (let root login remotely)
+MaxAuthTries 6 (after 6 invalid password entries you are rejected)
+RSAAuthentication no (rarely used, not that secure)
+PubkeyAuthentication yes (most frequently used key based auth method)
+IgnoreRhosts yes (not very secure auth mechanism)
+RhostsRSAAuthentication no (not very secure auth mechanism)
+HostbasedAuthentication no (not very secure auth mechanism)
+PermitEmptyPasswords no (all users must have a password to login)
+PasswordAuthetication yes (allow login with a password--*very* insecure, but convenient. Use a good password)
+Kerebos* no (disable all Kerebos lines unless you plan on using this auth scheme)
+GSSAPIC* no (disable all gssapic lines unless you plan on using this auth scheme)
+UsePAM yes (allow auth from pam)
+AllowTcpForwarding no (disable all forwarding of ports unless you need it)
+GatewayPorts no (disable all forwarding of ports unless you need it)
+X11Forwading no (disable all forwarding of X11 unless you need it)
+Save your changes. 
+
+Restart sshd:
+-/etc/init.d/sshd restart
+
+Creating users:  
+Users are system users. 
+-useradd <username> -g private -G anon
+-passwd <password>
+NOTE: Anybody who you don’t want to have SSH access.  Edit /etc/passwd and change their shell from /bin/bash to /sbin/nologin.
+
+Internet access setup:
+-There must be a port forwarding rule for this host and port 22 on your router if you want to use SSH outside of your LAN.
+
+Testing LAN and Internet access:
+-Get to a Windows machine.  Download “Putty”.  Connect to your server 192.168.1.123 (LAN) or x.x.x.x (Public IP from ISP)   Enter your login and password.  
+
+
+BIND
+Every time a host on your LAN goes to a website it has to query your ISP’s DNS servers to lookup the IP corresponding to the domain name you asked to go to.  This takes anywhere from a couple milliseconds to a couple seconds.  With a DNS caching server your LAN machines will ask the server on your network for the IP of domains. If it is for a domain that hasn’t been visited yet it will be forwarded to your ISP’s DNS servers (no change); but if you have been to that site before the local DNS server will respond to the hosts request.  This makes going to websites slightly faster.  
+
+Install bind:
+-yum install caching-name server
+
+Start bind at boot:
+-chkconfig named on
+
+Check the config:
+-vim /etc/named.conf (you shouldn’t have to change anything)
+Save any changes.   
+
+Restart BIND.
+-/etc/init.d/named restart
+
+Tell your server to query itself for DNS before going outside:
+-vim /etc/resolv.conf
+Add  this line above all other “nameserver” lines
+-nameserver 127.0.0.1
+
+Internet access setup:
+-We won’t be doing this.  
+
+Testing LAN access:  
+-Windows box > Control Panel > Network Connections > Local Area Connection > Properties > TCP/IP > Properties.  Give your machine a static IP in your LAN (192.168.1.200), point it at your gateway and set the DNS server to be your new server (192.168.1.123)> Apply>Ok.   Go to some websites.  
+
+NOTE: You may want to add this to your router/dhcp servers list of DNS servers to send out to people.  
+
+Squid
+Every time a machine on your LAN goes to a website your ISP is contacted, the destination server is contacted and the site is downloaded to the original source computer.  If several machines on your LAN go to the same websites all through out the day than a proxy server will help you speed things up.  The proxy server saves recent website requests and can then pass these answers back to the querying hosts, essentially this means that your ISP and the destination sever may never have to be contacted (and if they are contacted less data will need to be downloaded).  This will save you time and bandwidth.  Another bonus of the setup below is that we are going to configure Squid not to show ads that are on several sites across the net.  
+
+Install Squid:
+-yum install squid
+
+Set Squid to start at boot:
+-chkconfig squid on
+
+Download and Install adzapper (the ad removing plugin): 
+- cd /etc/
+-wget http://adzapper.sourceforge.net/scripts/squid_redirect
+-mv squid_redirect adzap
+-chmod a+rx adzap
+
+Configure Squid:
+-vim /etc/squid/squid.conf
+cache_mem 32 MB (I like to allow more sites and files to sit in RAM for faster retrieval. I have some RAM to spare, if you don‘t, don‘t set this so high.)
+maximum_object_size: 300 MB (largest file squid will keep.  Higher is better if you download the same large file over and over again. I have lots of space to spare, if you don‘t, don‘t set this value this high.)
+maximum_object_size_in_memory: 5 MB (largest file kept in the cache_mem, ready to serve up quickly.  If you want larger files that you access a lot to be stored in memory increase cache men and this value.)
+ipcache_size: 2000 (store a few more IP’s in memory)
+fqdncache_size: 2000 (store a few more domain names in memory)
+cache_dir aufs /var/spool/squid 1024 16 256 (aufs performs better, use 1Gb of space, create x directories)
+redirect_program /etc/adzap (ADD this line if you want ad filtering)
+redirect_children 12 (how many copies of adzap to run. Run at least 1 per connection)
+redirector_bypass on (ADD this line.  It allows squid to process requests even if adzap is out of children or is failing)
+acl lan src 192.168.1.0/255.255.255.0 (Substitute your LAN IP range. )
+http_access allow lan (add before http_access deny all)
+memory_pools_limit 50 MB (only let squid keep its hands on 50MB of memory for future use, free the rest)
+visible_hostname slave (your hostname)
+Save the changes.
+
+Restart Squid:
+-/etc/init.d/squid restart 
+
+Internet access setup:
+-This setup was for only allowing computers on your LAN to use the proxy.  If you want to use it over the internet you will need to setup port forwarding to port 3128 on this box on your router.  You will also need to create some new ACL and http_access lines to allow your remote public IP range to pass traffic through squid.
+
+Test it:
+-Windows> Firefox>Tools > Options > Advanced > Network> Settings > Manual > 192.168.1.123 (your private IP, or your public IP if you are in a remote location and did the internet setup) port: 3128 > use for all > apply > ok > ok.  Restart firefox and go to a couple of sites, go to at least a few with ads.  
+
+Apache
+Setting up a web server will allow you to access your files whenever and wherever you want so long as you have access to an internet connection and a web browser.  We will be setting up two separate “shares” .  One of which will require your login and password and will list *all* of the files in your /files/private and /files/pub directory.  The other share will be for public files and web pages and anybody on the internet will be able to see these.  
+
+Install apache
+-yum install httpd
+
+Make apache start at boot:
+-chkconfig httpd on
+
+Configure apache:
+-vim /etc/httpd/conf/httpd.conf
+Listen 80 
+Listen 9999 (we will be using virtual hosts and different ports to distinguish the two shares)
+Listen 8888  (I’m avoiding name based vhosting in case someone don’t own a domain or if their ISP blocks port 80)
+Disable the following modules.  We won’t need them in this setup.  If you are going to do anything else advanced with Apache you will need to keep whatever modules you plan on using enabled.
+#LoadModule auth_digest_module modules/mod_auth_digest.so
+#LoadModule ldap_module modules/mod_ldap.so
+#LoadModule auth_ldap_module modules/mod_auth_ldap.so  
+#LoadModule env_module modules/mod_env.so
+#LoadModule dav_module modules/mod_dav.so
+#LoadModule status_module modules/mod_status.so
+#LoadModule imap_module modules/mod_imap.so
+#LoadModule actions_module modules/mod_actions.so
+#LoadModule speling_module modules/mod_speling.so
+#LoadModule info_module modules/mod_info.so
+#LoadModule dav_fs_module modules/mod_dav_fs.so
+#LoadModule rewrite_module modules/mod_rewrite.so
+#LoadModule proxy_module modules/mod_proxy.so
+#LoadModule proxy_ftp_module modules/mod_proxy_ftp.so
+#LoadModule proxy_http_module modules/mod_proxy_http.so
+#LoadModule proxy_connect_module modules/mod_proxy_connect.so
+
+#Document Root “/files” (main dir to serve files out of)
+<Directory />   (permissions of any directory not specifically defined. Follow links, show file listing)
+    Options FollowSymLinks Indexes
+    AllowOverride AuthConfig
+</Directory>
+
+#<Directory "/var/www/html"> (we will use a virtual host to setup our “catch all“ server)
+ #Options FollowSymLinks Indexes
+#    Order allow,deny
+ #   Allow from all
+#</Directory>
+
+ServerSignature off (slightly more secure No apache Cent OS footer on file list. )
+
+Comment out the cgi stuff.  We won’t be using it.  
+#ScriptAlias /cgi-bin/ "/var/www/cgi-bin/"
+#<Directory "/var/www/cgi-bin">
+  #  AllowOverride None
+   # Options None
+   # Order allow,deny
+   # Allow from all
+#</Directory>
+
+#AddHandler imap-file map (we already disabled the image map module)
+#AddHandler type-map var (don’t need the welcome page anymore)
+#AddType text/html .shtml
+#AddOutputFilter INCLUDES .shtml (we won’t be using SSI)
+
+Configure the virtual hosts:
+Everything that doesn’t have a port specified (ie: 80 on the LAN). This will be your private access on the LAN.  It is just here to save time because you won’t have to use a port number.  
+<VirtualHost *:80>
+DocumentRoot /files/private
+<Directory “/files/private”>
+Options FollowSymLinks Indexes
+AuthType Basic
+AuthName "Password Required"
+AuthUserFile /files/.httpd.users
+Require valid-user
+AllowOverride AuthConfig
+    Order allow,deny
+    Allow from all
+</Directory>
+</VirtualHost>
+
+Everything on 8888 will ask for password and list all files. This is your private access.
+<VirtualHost *:8888>  
+DocumentRoot /files/private
+<Directory "/files/private">
+Options FollowSymLinks Indexes
+AuthType Basic
+AuthName "Password Required"
+AuthUserFile /files/.httpd.users
+Require valid-user
+AllowOverride AuthConfig
+    Order allow,deny
+    Allow from all
+</Directory>
+</VirtualHost>
+
+<VirtualHost *:9999>
+Everything on 9999 will be free to pass through and will list all the files in the /files/pub directory.  
+DocumentRoot /files/pub
+<Directory "/files/pub">
+Options FollowSymLinks Indexes
+AllowOverride none
+    Order allow,deny
+    Allow from all
+</Directory>
+</VirtualHost>
+
+
+Save your changes.  
+
+Delete the welcome page setup.  
+-rm /etc/httpd/conf.d/welcome.conf
+
+Create accounts:
+-htpasswd -c /files/.httpd.users <your first private user>
+(This will create the file, must match what is referenced in the apache config and add the user you choose.)
+Adding another account:
+-htpasswd /files/.httpd.users <username>
+
+
+Restart apache:
+-/etc/init.d/httpd restart
+
+Internet Setup:
+Forward these ports to the server on your router 8888, 9999.  
+Get a domain name or a dyndns address and setup cloaked forwarding. IE: http://private.blah.com links to http://68.12.34.55:8888, http://public.blah.com links to http://68.12.34.55:9999
+
+Testing:
+-From LAN-- Browser > http://192.168.1.123 (server ip).  It will prompt you for login and password.  Once entered correctly you will be able to see all files.  Note:  http://192.168.1.123:8888 will do the same thing.  Browser > http://192.168.1.123:9999 will not prompt you for a password and you will see the files in /files/pub folder.  
+-From Internet-- Browser > http://private.blah.com (see internet setup).  It will prompt you for login and password.  Once entered correctly you will be able to see all files.    Browser > http://public.blah.com (see internet setup) will not prompt you for a password and you will see the files in /files/pub folder.  
+
+PERMISSIONS GOTCHAS/TESTS:
+Folders must be at least 775 for apache to be able to serve them and for the rest of this howto to work.  This is taken care of with the script.  
+
+VSFTPD
+An FTP server will allow you to upload and download your files nearly anywhere in the world.  It will also give guests an easy way to download large files or big sets of smaller files.  
+
+Install vsftpd:
+-yum install vsftpd
+
+Set to start at boot:
+-chkconfig vsftpd on
+
+Configure vsftpd:
+-vim /etc/vsftpd/vsftpd.conf
+ftpd_banner=Welcome to “Name’s” FTP site. (what the site says at login)
+chroot_list_enable=YES (lock local users not in this file in the private dir)
+chroot_local_user=YES (lock users in to begin with)
+no_anon_password=YES (allow anon users without making them put in a “password”)
+pasv_enable=YES (enable passive connections)
+port_enable=YES (enable active connections)
+setproctitle_enable=YES (show more server info in ps aux)
+text_userdb_names=YES (show the user who owns files instead of their UID)
+ftp_data_port=20 (active connection port)
+listen_port=21 (active connection port)
+max_clients=25 (maximum connections at one time)
+max_per_ip=3 (maximum connections from the same IP)
+pasv_max_port=2720 (passive connection port)
+pasv_min_port=2710 (passive connection port)
+anon_root=/files/pub (where to put anonymous users)
+local_root=/files (where authenticated users go. This will allow them to see pub and private stuff)
+pasv_address=YOUR_PUBLIC_IP (for example 68.12.34.55). This is needed to facilitate passive 
+connections.
+local_umask=007 (allow user and people in the private group to edit files)
+anon_world_readable_only=no (allow anonymous users do download any file in /pub)
+
+IF YOU DECIDE TO LET ANON PEOPLE UPLOAD (NOT RECCOMENDED)
+chown_uploads = YES
+chown_user = anon
+anon_upload_enable = YES
+anon_umask = 000 (allow everyone to do whatever they want with these files)
+Save your changes.  
+
+Create the chroot list file.  Users in this list will not be locked into /files/storage once they login. 
+-touch /etc/vsftpd.chroot_list
+
+Restart vsftpd:
+-/etc/init.d/vsftpd restart
+
+Creating users:  
+Users are system users. 
+-useradd <username> -g private -G anon
+-passwd <password>
+
+Internet Setup:
+Forward these ports to the server on your router 20-21, 2710-2720.  
+Create an “A” record for your domain or dyndns domain.  It should be ftp.blah.com and point to your public IP (for example 68.12.34.55).  
+
+Testing:
+From LAN:
+FTP Client > 192.168.1.123 login: anonymous pass: none > should display the pub folder contents.  This should only work in “active” mode.  You should not be able to upload files.  
+FTP Client > 192.168.1.123 login: your_username pass: your_password > should display the private and public folder.  This should only work in “active” mode.  You should be able to upload files.  
+From Internet:
+www.net2ftp.comà ftp.blah.com (see internet setup) à login: anonymous pass: none à should display the pub folder contents.  This should work in both active and passive mode.  You should not be able to upload files. 
+www.net2ftp.comà ftp.blah.com (see internet setup) à login: your_username pass: your_password à should display the private  folder and the pub folder.  This should work in both active and passive mode.  You should be able to upload files. 
+
+PERMISSIONS GOTCHAS/TESTS:
+-The default group for people we are adding is “private”.  If you ftp in as bill and upload a file to the private folder private samba users will immediately be able to edit and delete this file.   This is how it should be.  Private NFS users will immediately be able to edit and delete this file.  This is how it should be.  
+
+-If you  ftp in as user “bill” and upload files to the public directory they will still be owned by bill/private and have the permissions 660.  Note: we wouldn’t even be able to write to this dir if we didn’t add the -G anon to the useradd command. What this means is that “private” (go through private auth, private folder then symlink to pub) samba users will be able to edit or delete these immediately, this is how it should be. Public samba users will be able to open this file but not edit or delete it, this is how it should be.  Private NFS users will be able to edit and delete the file, this is how it should be.  
+
+-X- Public NFS users will NOT be able to read this file until it is manually/automatically chmoded.   
+ This is because the file is owned by bill/private when the NFS public share forces the user and group anon.  SUGGESTED WORKAROUND: If you ever ftp something to the public directory chmod it 777 in the ftp client before you quit. Note: We could add “anon” to the private group to get around this, but that is a security risk that defeats the purpose of all this segregation to begin with.  
+
+-X-Anonymous ftp users won’t be able to download this file until the manual/script based chmod occurs.  This is because vsftpd doesn’t allow the downloading of files for anonymous users unless the file is world readable (even though I enabled an option to bypass this).  SUGGESTED WORKAROUND: If you ever ftp something to the public directory chmod it 777 in the ftp client before you quit.  
+Note: We could bypass this by changing the default umask to allow world readability but that would mean everyone on the Linux box could see the contents of the files in the /private directory.  Waiting an hour seems to be a more reasonable answer to me than opening up that huge security hole.  
+
+Samba
+Samba will allow you and your guests to access files from other Windows (and Linux) based computers on the LAN.  
+
+Install samba:
+-yum install samba
+
+Make samba start at boot:
+-chkconfig smb on
+
+Configure samba:
+-vim /etc/samba/smb.conf
+Workgroup = workgroup (make it match the workgroup your current windows machines are in)
+Server string = shared files (just a description)
+Hosts allow = 192.168.1. 127. (adapt to your LAN IP range. No ending octet)
+Map to guest = Bad User (what to do when no login is supplied -- treat as guest, allow access if guest =ok)
+Guest account = anon (the unix user that the system will allow to have access to /files/pub)
+Encrypt passwords = yes ( I think this is need for windows 2000 and up)
+Local master = no (we don’t want this fake windows server to win any active directory elections)
+Os level = 10 (we don’t want this fake windows server to win any active directory elections)
+Domain master = no (we don’t want this fake windows server to win any active directory elections)
+Preferred master = no (we don’t want this fake windows server to win any active directory elections)
+Domain logons = no (we don’t need it to process logins just folder access rights)
+Wins support = yes (do name to IP translation and caching)
+#[homes] (we won’t be sharing the home directories)
+ #  comment = Home Directories
+  # browseable = no
+  # writable = yes 
+
+[public]    (our public read only share)
+   comment = Public Stuff
+   path = /files/pub  (where the files are)
+   public = yes  (allow un-authed guests)
+   read only = yes (can’t upload files)
+   guest ok = yes (allow un-authed guests)
+   browsable = yes (display share in browsing list)
+   create mask = 0777
+   directory mask = 0777
+
+[private] (our private writable share)
+comment = Private Stuff
+path = /files/private (where the files are)
+guest ok = no  (no guest access)
+writable = yes  (allow the writing of files)
+browsable = yes  (show up in browser list)
+write list = @private (the group of people allowed access)
+Force user = private (perform all operations as user private)
+force group = private (perform all operations as group private)
+create mask = 0660 
+directory mask = 0775
+
+Save your changes. 
+
+Creating users:
+Users are system accounts. 
+-useradd <username> -g private -G anon
+-passwd <username>
+-smbpasswd  -a <username>
+
+Restart samba:
+-/etc/init.d/smb restart
+
+Internet access setup:
+-We won’t be doing this.  
+
+Testing:
+Windows box à Start > Run > \\192.168.1.123 > Make sure you can get into the pub dir without a password and that you can read files but not upload new files.  Make sure you the private folder asks you for a login and password and that the first private user you created can get in and read and write files. 
+Linux box à Konqueror > smb://192.168.1.123 > Make sure you can get into the pub dir without a password and that you can read files but not upload new files.  Make sure you the private folder asks you for a login and password and that the first private user you created can get in and read and write files. 
+
+PERMISSIONS GOTCHAS/TESTS:
+-Under the public account you can view but not edit or delete files.  This is how it should be. 
+-Under the private folder you can upload edit and delete files made by other nfs and ftp users.  This is how it should be.  
+-Under the private folder FTP private users will be able to download and delete the files you place here, this is how it should be. 
+-To edit or delete public files placed in the public folder by other nfs or ftp users you have to go through the private folder then the symlink to the public folder, this is how it should be.  
+-If you place a file in public folder over samba (via symlink) you will be able to download and delete these files over the private FTP accounts, this is how it should be.  
+-If you place a file in the private folder or the public folder private NFS users will be able to edit and delete it.  This is how it should be.  
+
+-X- If you place a file in the public folder public NFS users will NOT be able to read it until it is manually/automatically chmoded.  This is because the file is owned by private/private when the NFS public share forces the user and group anon.  SUGGESTED WORKAROUND: Wait for the script.  Or use a private account--how many untrusted Unix boxes do you really have on your home network? Note: We could add “anon” to the private group to get around this, but that is a security risk that defeats the purpose of all this segregation to begin with.
+
+-X- If you place a file in the public folder over samba (via symlink) anonymous ftp users will NOT be able to download it until it is chmoded either manually or via the script.  This is because vsftpd doesn’t allow the downloading of files for anonymous users unless the file is world readable (even though I enabled an option to bypass this).  SUGGESTED WORKAROUND: Wait for the script to run. 
+Note: We could bypass this by changing the default umask to allow world readability but that would mean everyone on the Linux box could see the contents of the files in the /private directory.  Waiting an hour seems to be a more reasonable answer to me than opening up that huge security hole.  
+
+NFS
+NFS is a file sharing protocol  primarily used on Unix and Linux based operating systems.  NFS was written a long time ago and by today’s standards is depreciated (at least in my opinion).  Samba is now easily cross platform capable and contains a lot more features than NFS.  In other words….use samba whenever possible, I’m just including this in this guide for completeness. 
+
+NFS was installed by default.  
+
+Configure NFS to start at boot
+-chkconfig nfs on
+
+Configure NFS:
+Here are some things you need to know about the configuration below.  
+    It is two long lines, do not use line breaks or trailing spaces.  NFS authenticates users based on their IP     addresses, instead of, the now standard username password combination.  
+    The IP addresses in front of the ()’s are the IP addresses of your private (read and write capable) users. These IP addresses should be statically assigned to machines that you or someone you really trust administers on your network.  These IP’s should NOT be in your routers DHCP range.  
+    The anonuid and anongid numbers are the user and group numbers of the user we are going to forcefully use while accessing this share.  For the public share this will be “anon:anon”, for the private share this will be “private:private”. These numbers can be retrieved by issuing a “cat /etc/passwd”
+Update your settings accordingly…..
+ 
+-vim /etc/exports
+/files/pub *(ro,all_squash,anonuid=501,anongid=501) 192.168.1.101(rw,all_squash,anonuid=501,anongid=501) 192.168.1.110(rw,all_squash,anonuid=501,anongid=501) 192.168.1.209(rw,all_squash,anonuid=501,anongid=501)
+
+/files/private 192.168.1.101(rw,all_squash,anonuid=502,anongid=502) 192.168.1.110(rw,all_squash,anonuid=502,anongid=502) 192.168.1.209(rw,all_squash,anonuid=502,anongid=502)
+
+
+Restart NFS:
+-/etc/init.d/nfs restart
+
+Internet Setup:
+We won’t be doing this. 
+However, since NFS allows and denies access based on IP it is important to make sure that your home network is setup properly.  The “trusted” IPs on the private and public share lines should be statically assigned to machines that you administer and should not be in your router (or dhcp servers) dhcp range.  
+
+Testing:
+From an untrusted IP: LinuxàKonquerorànfs://192.168.1.123  you should be able to read the files in the public directory.  You should not be able to write to the public directory.  
+From a trusted IP:  LinuxàKonquerorànfs://192.168.1.123 You should be able to read and write to the public and private folders.  
+
+PERMISSIONS GOTCHAS/TESTS:
+-If you use an untrusted IP and connect to the public folder you should be able to read files but not write to them.  
+- If you use a trusted IP and connect to the public folder you will be able to read and write files created by other ftp and samba users.  This is true for the private folder as well. 
+-If you create a file in the public folder public samba users will be able to read it immediately.  They will not be able to edit or delete it. 
+-If you create a file in the public folder private FTP users will be able to download and delete it.  Public FTP users will be able to download it, but not delete it.  This is all how it should be.
+-If you create a file in the private folder private samba users will be able to read, write, and delete this file immediately. 
+-If you create a file in the private folder, private FTP users will be able to download and delete it.
+
+-X-If you create a file in the public folder private samba users  will be able to read and delete the file immediately.  However, they will NOT be able to edit it until a manual/automatic chomd occurs.  This is because the default umask that NFS uses is 022.  This means all new files are 644.  I’m not sure how to change this or if its even possible.  SUGGESTED WORKAROUND: chmod it manually, or wait for the script to run.
+
+**NOTE: I fought with this proper permissions across all protocols problem for days.  This was the best solution I could come up with; without creating big security holes just for convinces sake.  If you have any suggestions on how to make it better please let me know.  ***
+
+Printer Sharing
+Ever wanted to share a printer with all the machines in your house?  This will show you how! 
+Note: I strongly suggest buying an expensive soho quality printer.  It should NOT be a multifunction device.  And it should preferably hook up via parallel. I have found Linux has problems with most other printers.    This section assumes CUPS supports your printer.  http://www.cups.org/ppd.php
+
+Install CUPS:
+-yum install cups
+NOTE: You may need to install ghostscript as well.  Lots of printers use it.  
+
+Set CUPS to start at boot:
+-chkconfig cups on
+
+Configure CUPS:
+We are going to use a browser to configure CUPS.  By default CUPSD only allows the print server itself to configure its own settings.
+-ssh into the server as root  (putty 192.168.1.123)
+-yum install lynx
+-lynx http://127.0.0.1:631
+Manage Printers > Add Printer > Login using (root / whatever) > You do the rest!  I don’t what kind of printer you have or the settings it requires….
+Or if you manufacturer offers them, you can always install the printer drivers manually.  
+
+Edit the config file so other Linux machines on  your home network will see the printer and be able to administer it:
+-vim /etc/cups/cupsd.conf
+Port 631 (port for web server configuration)
+Browsing On (allow other machines to find printers)
+BrowseProtocols cups
+BrowseAddress @IF(eth0)     (where to send announce printer information. should be your network card. )
+BrowseAllow 192.168.1.0/255.255.255.0   (change to your LAN IP)
+<Location />  (allow access to web interface change to your LAN IP range)
+Order Deny,Allow
+Deny From All
+Allow From 192.168.1.0/255.255.255.0
+</Location>
+
+<Location /admin> (allow access to the administration pages of the web interface.  Change to your LAN IP range)
+AuthType Basic
+AuthClass System
+Order Deny,Allow
+Deny From All
+Allow From 192.168.1.0/255.255.255.0
+</Location>
+Save and close the file. 
+
+
+Restart cups:
+-/etc/init.d/cups restart
+
+Restart samba so it will start sharing the printer:
+-/etc/init.d/smb restart
+
+Internet Setup:
+We won’t be doing this. 
+
+Testing:
+From Server > lspci | lpr
+From Windows > Start > Run > \\192.168.1.123 > Printers and Faxes > Right Click > Connect > Do the install, choose print test page. 
+From Linux > Use the gnome/kde  printer setup application.  
+
+
+
+
+
+Want More?
+Good lord man!  
+Do you really want to torture this poor box anymore?
+
+1) You can easily setup another vitural host to host an actual website as well as these file dumps.  Here is how:
+Lets re-enable all the apache defaults, since you are going above and beyond this guide I’m not sure what you will need and what you won’t. 
+-vim /etc/httpd/conf/httpd.conf
+LoadModule auth_digest_module modules/mod_auth_digest.so
+LoadModule ldap_module modules/mod_ldap.so
+LoadModule auth_ldap_module modules/mod_auth_ldap.so  
+LoadModule env_module modules/mod_env.so
+LoadModule dav_module modules/mod_dav.so
+LoadModule status_module modules/mod_status.so
+LoadModule imap_module modules/mod_imap.so
+LoadModule actions_module modules/mod_actions.so
+LoadModule speling_module modules/mod_speling.so
+LoadModule info_module modules/mod_info.so
+LoadModule dav_fs_module modules/mod_dav_fs.so
+LoadModule rewrite_module modules/mod_rewrite.so
+LoadModule proxy_module modules/mod_proxy.so
+LoadModule proxy_ftp_module modules/mod_proxy_ftp.so
+LoadModule proxy_http_module modules/mod_proxy_http.so
+LoadModule proxy_connect_module modules/mod_proxy_connect.so
+
+ScriptAlias /cgi-bin/ "/var/www/cgi-bin/"
+<Directory "/var/www/cgi-bin">
+ AllowOverride None
+ Options None
+ Order allow,deny
+ Allow from all
+</Directory>
+
+
+AddHandler imap-file map 
+AddType text/html .shtml
+AddOutputFilter INCLUDES .shtml 
+
+Change directory index for new file types supported.
+DirectoryIndex index.php index.shtml index.html index.htm index.html.var
+
+Enable CGI
+AddHandler cgi-script .cgi .pl
+
+Setup the new virtual host:  (this isn’t the most secure setup, but it will accommodate almost any feature you use)
+Listen 7777
+<VirtualHost *:7777>
+DocumentRoot /var/www/html
+<Directory "/var/www/html">
+Options FollowSymLinks Indexes ExecCGI Includes
+AllowOverride All
+    Order allow,deny
+    Allow from all
+</Directory>
+</VirtualHost>
+Save and close the file. 
+
+Install PHP and MySQL:
+-yum install php mysql-server php-mysql
+
+Start MySQL at boot:
+-chkconfig mysqld on
+
+Configure PHP and MySQL to your liking:  (I’m not going into this)
+-vim /etc/my.cnf
+-vim /etc/php.ini
+
+Restart apache and mysql:
+-/etc/init.d/httpd restart
+-/etc/init.d/mysqld restart
+
+Internet setup:
+Create another cloaked forwarder on you dyndns or domain name.  
+www.blah.com should point to http://68.12.34.55:7777
+
+Try it out:
+http://192.168.1.123:7777  or http://www.blah.com
+
+2) Why not turn this box into your router as well.   Using machines as routers works very well.  There is a performance increase and I’ve never seen one drop a connection or hiccup or have to be power cycled.  All you will need is another network card, a script I’ve written and some time to configure the thing.  Just download my router2.sh script and get to work.  One other note, you will need to configure DHCPD as well if you want a DHCP server.  Sorry, I don’t have a guide on that yet, you can figure it out.  Be sure to look at the “TCP rules” section of the script.  
+
+3) Have you ever wanted to securely share files between you and a geek friend over the internet?  You can set this box to do that as well.  Check out my (soon to be posted) SSHFS guide.  
+
+4) Why not also make this box into a mail proxy.  In another guide I hope to write soon I will show you how to check several POP accounts and download all the emails to a local machine.  The machine will then sort them and ditch the spam.  Finally it will serve them up locally via IMAP and remotely through web mail.  Did I mention it will also allow you to forward SMTP (outgoing) messages through it as well?
+
+I can’t think of anything else a normal geek would want to do.  If you know anything else, let me know.  
+

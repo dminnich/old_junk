@@ -1,0 +1,298 @@
+How To Setup A Public Samba Share
+-------------------------------------------
+Got some MP3s/Pictures on your computer you want to allow your brother/sister to access?
+Are you a small business owner that has some files you would like to allow all your employees to access?
+
+This howto will show you the steps you need to take in order to setup a public samba share.  Samba shares are simply folders full of files that other computers can access over the network. Windows, Macintosh, and Linux based computers can all access samba shares.  A public share (what this guide covers) is a share that everybody can access and change files in.  This means anyone can: add files, edit files, and delete files -- in other words -- this is *VERY* insecure.  Even though this is insecure, lots of times a share like this is needed.  
+
+What this guide assumes:
+-The machine that will be hosting the samba share is linux based.  
+-You have a basic understanding of Linux. 
+-You have a basic understanding of how to access samba shares on Windows machines.  
+
+Who this guide is for:
+-Home users.
+-Small businesses that *trust* all of their employees.  
+-People who want to house data they don't really care about (temporary dump space). 
+
+Who this guide is NOT for:
+-People who want to have private directories for each of their users.  
+-People who want to have shares based on departments (ie: accounting, management, engineering).
+
+With all that said, lets get started......
+
+/////////////////////////////////////////
+                STEP ONE
+/////////////////////////////////////////
+
+Buy a server.
+I'm not going to help you much here.  
+
+If you are building a server check out newegg.com. If you are buying pre-built I know some people that have had good luck with Proliants. Just make sure its fairly powerful and has enough hard drive space to host all the files you plan to share. 
+
+/////////////////////////////////////////
+                STEP TWO
+/////////////////////////////////////////
+Download Cent OS.  
+Cent OS is a Red Hat Enterprise Linux clone.  Which means its secure, stable and "standard".  
+
+Go to centos.org > downloads > mirrors > choose the most recent version > choose your processor architecture > choose the one closet to you > download the ServerCD.  
+The choice for most people, at the time of this writing anyhow, should be CentOS-4.4.ServerCD-i386.iso.  
+
+Once its downloaded burn it to a disc.  Deep Burner is a good application for Windows if you need something that will burn ISOs.  
+
+/////////////////////////////////////////
+                STEP THREE
+/////////////////////////////////////////
+Time for the install.  
+
+If you are using a server with hardware RAID support go ahead and create your arrays.  This varies greatly between systems, see your documentation.  I usually do RAID 1 on 2 drives for the OS, and RAID 0+1 for the rest of the drives that will house the shared data.
+
+Pop the CD in your server.  Make sure a keyboard, mouse, monitor and network cable are all hooked up, and hit the power button.  
+
+The computer should boot off the CD and you should see a Cent OS screen.  
+If your computer instead boots into an operating system you want to get rid of or says "boot disk not found" you need to restart the computer, go into the bios and change the Boot Order.  To get into the bios you usually hit F1 or F2 or F8 or F10 or Delete on the keyboard as soon as the machine turns on.  The initial screen will usually tell you.  Once you are in the bios look for something similar to "boot order" and make sure that CD is above hard drive.  Save your changes and exit.  
+
+
+At the Cent OS screen hit enter.  
+
+Hit OK > TEST to make sure the CD is in good shape.  Hit continue once it passes. 
+
+Once the real installer (anaconda) starts click next at the welcome screen.  Choose your language and click next.  Choose keyboard style, click next. 
+
+Choose manually partition and click next.  Set up the partitions the way you want them.  Click next.
+I usually do / and swap on two drives in a RAID 1 array.  And /share on all the extra drives in a RAID 0+1 array.  The separation of / and /share is just in case I decide to switch distros or have to reinstall for some reason, that way you won't loose the shared data.  RAID 1 should give us some fault tolerance.  
+
+If you need to make any changes on the grub screen do it.  Then click next.
+
+On the network devices page click eth0 or whatever your adapter is and click edit.  Uncheck configure using DHCP.  Give it a static IP in your address range. Set the hostname to something useful like filesrv.yourdomain.  Put in your gateway address and your DNS server addresses and click next.  If you don't know these settings ask your network admin.  
+
+On the next screen choose enable firewall. Check Remote Login.  Make sure enable SELinux is set to Active.  Click next.  
+
+Choose any additional languages you want.  Click next.  
+
+Choose your time zone, click next.
+
+Set your root password.  Make it hard to guess.  Click next.  
+
+Choose customize packages and click next.  
+
+The package selection screen appears.  
+This will be a *very* slimline install.... (customize it to your liking)
+-All desktops can be unchecked.  
+-Check editors and all editors from under details.  
+-Uncheck text based internet, unless you need it.  
+-Sound and video can stay unchecked.  
+-Click details for Server configuration tools.  Choose the config-samba.  Check any others you may think you will want to use.  
+-Uncheck Web Server, unless you need it. 
+-Uncheck Mail Server, unless you need it. 
+-Keep Windows File Server checked.  
+-Uncheck DNS Nasme Server, unless you need it. 
+-Uncheck FTP Server, unless you need it. 
+-Keep Postgres, MySQL and Network Servers unchecked.  
+-Check Development Tools.  
+-Keep Gnome Software Development unchecked.  
+-Keep Administration Tools Checked.  
+-Keep System Tools unchecked.  
+-Uncheck Printing Support, unless you need it.  
+If you follow this exactly your install size should be 758Mb (assuming version 4.4 for i386). 
+Click next.  
+
+Click next to confirm the install. 
+
+Wait.
+
+Reboot.
+
+
+/////////////////////////////////////////
+                STEP FOUR
+/////////////////////////////////////////
+Updates and tweaks.  
+
+Login as root.  
+
+Lets go ahead and get all the distribution updates.  
+Issue: 
+-yum update
+Answer Y to any questions that pop up.
+
+Services are applications that start up when your computer starts up and usually run the entire time it is on. We can turn some of these off to save processing power. Only turn off what you won't be using. 
+Do a:
+-chkconfig --list | less
+Look for services that are turned "on" that you won't be using. Write them down.  Press "q" to exit less.  
+Issue:
+-chkconfig <service_name> off 
+for each one that you want to disable.  
+I chose to disable:
+nfslock,atd,cpuspeed,apmd,microcode_ctl,acpid,isdn,rpcidmapd,
+gpm,cups,sendmail,rpcgssd,autofs,anacron, pcmcia
+This assumes you will not be using NFS.  It also assumes you won't be using a printer or any type of power management. 
+
+You probably noticed that the one thing we actually want to use is disabled by default.  
+So issue:
+-chkconfig smb on 
+
+
+Now lets get rid of a few cron jobs.  
+Issue:
+cd /etc/
+mkdir no.cron
+mv /etc/cron.daily/yum.cron /etc/no.cron/yum.cron.daily
+mv /etc/cron.daily/0anacron /etc/no.cron/0anacron.daily
+mv /etc/cron.monthly/0anacron /etc/no.cron/0anacron.monthly
+mv /etc/cron.weekly/yum.cron /etc/no.cron/yum.cron.weekly
+mv /etc/cron.weekly/0anacron /etc/no.cron/0anacron.weekly
+I personally don't like anacron (cron is sufficient enough for my needs).  And I don't like scripts managing something as delicate as software repositories.  So I choose to disable these services.  If you ever decide to use them in the future just move the scripts back to their original locations.  
+
+That's enough tweaking for now. Do the rest on your on!
+
+/////////////////////////////////////////
+                STEP FIVE
+/////////////////////////////////////////
+Samba setup.  
+
+To make this setup as secure as possible we are going to create a user and group that will have access to only the share.  This means that instead of using the share as root or some other user who has files on the system the shared folder will have its own user.  That way if samba gets exploited the *worst* someone could do (in theory anyhow) is delete files in the share, and mess with other stuff that is world writable.
+-useradd -s /sbin/nologin smbpub
+smbpub is the name of our user.  And /sbin/nologin ensures nobody will be able to login or ssh into the server using this account.  
+-passwd smbpub
+Create a hard to guess password for the account.  Just in case the /sbin/nologin doesn't work, and somebody tries to login.  
+
+For our user "smbpub" to be able to modify files in our /share directory, he needs to own it.  
+-chown -Rf smbpub:smbpub /share
+
+Now lets make sure that our share directory is truly public.  This will allow *anyone* to add, edit and delete files in this directory.  
+-chmod -Rf 777 /share
+
+Now lets edit the samba configuration file:
+-nano /etc/samba/smb.conf
+
+-workgroup = WORKGROUP
+Set this to the workgroup windows machines in *your* network are currently using.  You can find this out by right clicking My Computer > Properties > Computer Name. Workgroup and MSHOME are common.  If you don't know, the default should work, it just want show up nicely under My Network Places. 
+
+-server string = File Server
+Description of the server.  Put whatever you want.  
+
+-hosts allow = 192.168.0. 192.168.1. 127.
+Uncomment this (delete the ;).  And set *your* network up here.  Ask your network admin if you need help.  For small home networks the above example may work properly. 
+
+Comment out (add # in front of) printcap name, and load printers.   This will disable printing support.  If you need printing support skip the above step.  
+
+Keep printing commented out unless you want printing support.  
+
+Comment out cups options unless you want printing support. 
+
+Comment out the first log file.  This complicated log file setup shouldn't be needed for us.  And uncomment the all log info in one file log file definition.  
+
+Max log size is fine.  
+
+Change security = user to:
+security = share
+
+All definitions from password server to include commented out.  
+
+The socket options are fine.  
+
+Interfaces down to remote announce should be commented out.  
+
+Set:
+local master = no 
+os level = 5
+domain master = no
+preferred master = no
+domain logons = no
+We are setting up a very limited file server.  All it will do is host public files.  Since this is its only job it don't need to process user logons or interact with any windows servers in your environment much at all.  This is also a safety measure to ensure the samba server doesn't try to take over your AD domain without you knowing it.  
+
+Logon script down to name resolve order can stay commented out.  
+
+Uncomment out wins support.  This will allow your samba server to answer samba based name queries.  All it does is cache lookups it has done in the past.  This is not dangerous because it doesn't really sync with other wins servers or do anything crazy.  
+
+Wins server and wins proxy can stay commented out.  
+
+dns proxy should stay set to no.  
+
+Preserve case to case insensitive can stay commented out.  
+
+idmap uid, idmap gid, template shell, windind use default domain can all stay the same.  
+
+Comment out the [homes] section and everything underneath it until you get to the end of the file.  
+
+Create this share (stuff in parenthesis are descriptions and should not be typed):
+
+[share]        (the name of the folder you will see under My Network Places for this share)
+comment = Public Files.    (A description of the share)
+path = /share              (the folder on the server to use for the share)
+writable = yes             (allow people to add, edit, and delete files)
+public = yes               (don't prompt people for passwords)
+force user = smbpub        (all actions done on this share will be done under smbpub's name)
+force group = smbpub       (all actions done on this share will be done under smbpub's group)
+create mask = 0777         (all files created will be readable and writable by the everyone)
+directory mask = 0777      (all folders created will be readable and writable by the everyone)
+
+
+Now that we have our share added we can leave nano.  
+-CTRL-O  
+Save Changes.
+-CTRL-X
+Exit nano.  
+-/etc/init.d/smb restart
+Restart smb so all the changes will take affect.  
+Issue 
+-tail /var/log/messages
+to make sure smb started without any problems. Once you see this is the case you can continue on to the next section.  
+
+
+/////////////////////////////////////////
+                STEP SIX
+/////////////////////////////////////////
+Network setup.
+
+Since we enabled the software firewall on the server we now have to open some ports to let people access the samba services.  
+
+-system-config-securitylevel-tui
+Make sure Security Level is enabled, then go to customize.  
+Go down to other ports and type:
+137:tcp 139:tcp 445:tcp 137:udp 139:udp 445:udp
+Choose OK.  Choose OK.  
+
+
+/////////////////////////////////////////
+                STEP SEVEN
+/////////////////////////////////////////
+Testing.  Drive Mapping.  
+
+Reboot the server.  
+-shutdown -r now
+This is merely for good measure.  
+
+Play around with the share a bit.  Copy some files to it from a windows machine and a linux machine.  Make sure the linux machine can edit and delete the files the windows machine copied over.  And make sure the windows machine can edit and delete the files the linux machine copied over. (Do all this for a Mac to, if you have one). Once you have a bunch of files there, do: 
+-cd /share 
+-ls -lha.  
+Make sure all the files are owned by smbpub:smbpub and all have 777 (rwxrwxrwx) permissions. If the execute bit isn't set you should still be fine.  
+
+***Note: If you create files in the share or copy files to the share on the server itself, these files must be CHOWNed to smbpub:smbpub.  They must also be CHMODed to 777.
+
+WINDOWS MAPPING
+Once you see everything is working you can map that share as a drive letter under windows.  
+-Start > Run > \\filesrv  > Hit Enter
+Replace "fileserv" with the hostname of the server.  Or you can use the static IP you gave it during the install.  
+-Right click share and choose Map Network Drive.  Choose a letter and click Finish.  
+Now people can save directly to the share using this drive letter.  
+
+LINUX MOUNTING
+-su
+-nano /etc/fstab
+Add something like this:
+//filesrv/share /mnt/share smbfs passwd= 0 0
+or if that gives you a filesystem error try 
+//filesrv/share /mnt/share cifs passwd= 0 0
+Exit nano.  
+-cd /mnt
+-mkdir share
+-chmod 777 share
+-mount -a
+Now people can save to the share directly using the /mnt/share folder.  
+
+Thats it!
+Enjoy your share!
+Just remember....it is VERY INSECURE.  

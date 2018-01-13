@@ -1,0 +1,472 @@
+#!/bin/bash
+#Imaging script.  
+#This is ugly.  
+#DM
+
+LOCALDIR="/images/"
+REMOTEDIR="/mnt/cdrom/"
+SERVER="192.168.1.11"
+SHARE="images"
+USER="DOMAIN\\user"
+PASS="password"
+
+#basic cleanup
+cd /
+umount /mnt/custom > /dev/null 2>&1
+umount ${REMOTEDIR} > /dev/null 2>&1
+
+
+#useful for dhcp setup.  
+echo "My network info is:"
+{ sleep 3; ifconfig | grep HWaddr; ifconfig | grep "inet addr"; } || echo -e "I was unable to find my networking information." 
+
+echo "~~~~~~~~~~~~~~~~~~~~~"	
+echo " Windows Imaging Menu"
+echo "~~~~~~~~~~~~~~~~~~~~~"
+echo "1. Install Recovery Partition"
+echo "2. Create Image"
+echo "3. Restore Image"
+echo "4. Re-install GRUB"
+echo "5. Backup MBR and partition table"
+echo "6. Exit to Linux"
+echo "7. Exit and shutdown"
+
+
+read -p "Enter choice (1 - 7)" choice
+case $choice in 
+
+1)echo "My hard drives are:"
+cat /proc/partitions |grep -e "[hs]d[a-z]$" |awk '{print $4,$3}' || { echo "Could not obtain my drive configuration information. Exiting to Linux.  Type \"autorun\" to start this process over again."; exit 1; }
+
+drive=
+while [ -z "$drive" ]
+do
+echo "Please type the name of the drive you want to install the recovery partition on." 
+read drive
+[ ! -e "/dev/${drive}" ] && { echo "The drive you specified can not be found."; drive=""; continue; }
+done
+
+echo "WARNING: All of the data on ${drive} is about to be permenately replaced by a single restore partition.  Additionally, your MBR and any bootloaders you have installed will be replaced by GRUB.  Continue (y,n)?"
+read answer
+[ "$answer" != "y" ] && { echo "Installation aborted. Exiting to Linux.  Type \"autorun\" to start this process over again."; exit 1; }
+
+partsize=
+while [ -z "$partsize" ]
+do 
+echo "How big (in gigs) do you want the space that holds local images to be?"
+read bssize
+egrep '[a-zA-Z]' <<< $bssize >/dev/null && { echo "Partition size can contain numbers only."; partsize=""; continue; } || { bssize=$(( $bssize * 1024)); partsize=$(( $bssize + 3072)); break;}
+done
+
+
+echo "Erasing the current partition table..."
+dd if=/dev/zero of=/dev/${drive} bs=512 count=1 > /dev/null 2>&1 && echo "Done." || { echo "Partition table erasing failed. Exiting to Linux. Type \"autorun\" to start this process over again."; exit 1; }
+
+echo "Refreshing paritition table..."
+partprobe && echo "Done." || { echo "Partprobe failed. Exiting to Linux. Type \"autorun\" to start this process over again."; exit 1; }
+
+
+echo "Partitioning Drive..."
+parted --script /dev/${drive} mklabel msdos \
+mkpart primary ext2 0 $partsize \
+set 1 boot on \
+mkpart primary ntfs $partsize 100% > /dev/null 2>&1 && echo "Done." || { echo "Failed to create partitions. Exiting to Linux.  Type \"autorun\" to start this process over again."; exit 1; }
+
+echo "Formatting Linux Partition..."
+mkfs.ext2 /dev/${drive}1 > /dev/null 2>&1 && echo "Done." || { echo "Failed to format the linux partition. Exiting to Linux.  Type \"autorun\" to start this process over again."; exit 1; }
+
+echo "Mounting the Linux Partition..."
+mount /dev/${drive}1 /mnt/custom && echo "Done." || { echo "Failed to mount the linux partition. Exiting to Linux.  Type \"autorun\" to start this process over again."; exit 1; }
+
+if [ "${bssize}" -ge "1024" ]; then
+echo "Creating the backstore that will store local images..."
+sysresccd-backstore create /mnt/custom/sysrcd.bs ${bssize} > /dev/null 2>&1 && echo "Done." || { echo "Failed to create backing store. Exiting to Linux.  Type \"autorun\" to start this process over again."; exit 1; }
+fi
+
+echo "Extracting the files of the root filesystem..."
+sysresccd-custom extract-nosizecheck > /dev/null 2>&1 && echo "Done." || { echo "Failed to extract the root filesystem. Exiting to Linux.  Type \"autorun\" to start this process over again."; exit 1; }
+
+rm -rf /mnt/custom/customcd/isoroot
+
+echo "Moving the root files to their proper places..."
+mv /mnt/custom/customcd/files/* /mnt/custom && echo "Done." || { echo "Failed to move the root files to their proper places. Exiting to Linux.  Type \"autorun\" to start this process over again."; exit 1; }
+
+echo "Copying initab,kernel,autoruns,initrd,sysrcd.dat..."
+cp /etc/inittab /mnt/custom/etc/ || { echo "Failed to copy the inittab. Exiting to Linux.  Type \"autorun\" to start this process over again."; exit 1; }
+cp /livemnt/boot/syslinux/rescuecd /mnt/custom/boot/ || { echo "Failed to copy the kernel. Exiting to Linux.  Type \"autorun\" to start this process over again."; exit 1; }
+cp -f /livemnt/boot/syslinux/initram.igz /mnt/custom/boot/  || { echo "Failed to copy the initrd. Exiting to Linux.  Type \"autorun\" to start this process over again."; exit 1; }
+cp -f /livemnt/boot/sysrcd.dat /mnt/custom/  || { echo "Failed to copy the sysrcd.dat. Exiting to Linux.  Type \"autorun\" to start this process over again."; exit 1; }
+cp -f /livemnt/boot/autorun0 /mnt/custom/root/ && echo "Done." || { echo "Failed to copy the autorun scripts. Exiting to Linux.  Type \"autorun\" to start this process over again."; exit 1; }
+
+#echo "Creating the local images directory..."
+#mkdir /mnt/custom/images && echo "Done." || { echo "Failed to create the local images directory. Exiting to Linux.  Type \"autorun\" to start this process over again."; exit 1; }
+
+
+rm -rf /mnt/custom/customcd
+
+
+echo "Editing fstab..."
+echo "/dev/${drive}1  /  ext2  errors=remount-ro  0  1" >> /mnt/custom/etc/fstab && echo "Done." || { echo "Failed to edit fstab. Exiting to Linux.  Type \"autorun\" to start this process over again."; exit 1; }
+
+echo "Installing grub..."
+#Convert the drive to layout to grub scheme.
+DRIVEDEF=${drive:2:1}
+COUNTER="0"
+for x in {a..z}
+do
+if [ "$DRIVEDEF" == "${x}" ]
+then
+DRIVEDEFNUM=${COUNTER}
+break
+fi
+let COUNTER++
+done
+
+
+#This installs grub to the MBR of your root drive, overwriting anything that is already there. 
+#I don't know of another way to make sure it works script wise.  
+#It sets the root (where linux is) to the first partition on the drive that you chose to format.  
+
+grub --batch <<ENDGRUB 1>/dev/null 2>/dev/null
+root (hd${DRIVEDEFNUM},0)
+setup (hd0)
+quit
+ENDGRUB
+ 
+if [ "$?" -ne "0" ]; then
+echo -e "Grub install failed. Exiting to Linux.  Type \"autorun\" to start this process over again."
+exit 1
+else
+echo "Done."
+fi
+
+echo "Configurging grub..."
+mv -f /mnt/custom/boot/grub/menu.lst /mnt/custom/boot/grub/menu.lst.bak
+echo "
+default	0
+timeout	5
+hiddenmenu
+title Windows
+rootnoverify (hd${DRIVEDEFNUM},1)
+savedefault
+makeactive
+chainloader +1
+
+title System Rescue
+root (hd${DRIVEDEFNUM},0)
+kernel /boot/rescuecd scandelay=5 backstore=alldev setkmap=us
+initrd /boot/initram.igz" >> /mnt/custom/boot/grub/menu.lst && echo "Done." || { echo "Failed to configure grub. Exiting to Linux.  Type \"autorun\" to start this process over again."; exit 1; }
+
+
+
+echo "Unmounting the Linux partition..."
+cd /
+umount /mnt/custom && echo "Done." ||  echo "Failed to unmount the Linux partition." 
+
+
+echo "The recovery partition has been successfully installed. Please reboot the machine and choose it from the GRUB menu."
+exit 0
+;;
+
+
+
+
+
+
+2)echo "My partition table look like this:"
+cat /proc/partitions|awk '{print $4,$3}' || { echo "Could not obtain my drive configuration information. Exiting to Linux.  Type \"autorun\" to start this process over again."; exit 1; }
+
+cimgpart=
+while [ -z "$cimgpart" ]
+do 
+echo "What partition would you like to make an image from? Type the name and number specification (ie: sda2)"
+read cimgpart
+[ ! -e "/dev/${cimgpart}" ] && { echo "The partition you specified can not be found."; cimgpart=""; continue; }
+done
+
+echo "What would you like to name this image? No spaces or weird characters."
+read cimgname
+
+
+clocchoice=
+while [ -z "$clocchoice" ]
+do 
+echo "Do you want to store this image on the Local machine or Remotely on a server (l,r)?"
+read clocchoice
+
+if [ "$clocchoice" != "l" -a "$clocchoice" != "r" ]; then
+echo "You have to choose \"l\" or \"r\"."
+clocchoice=""
+continue;
+fi
+done
+
+
+if [ "$clocchoice" == "l" ]; then
+fullcimgname=
+while [ -z "$fullcimgname" ]
+do 
+[ -e ${LOCALDIR}${cimgname}.000 ] && { echo "An image with that name already exists."; fullcimgname=""; echo "What would you like to name this image? No spaces or weird characters."; read cimgname; continue; } ||fullcimgname="${LOCALDIR}${cimgname}.000" 
+done
+
+echo "Creating image..."
+partimage -z1 -d -M -b save /dev/${cimgpart} ${LOCALDIR}${cimgname} && { echo "Image successfully created! Exiting. Type \"autorun\" to start this process over again."; exit 0; } || { echo "Image creation failed. Exiting to Linux. Type \"autorun\" to start this process over again."; exit 1; }
+fi 
+
+
+if [ "$clocchoice" == "r" ]; then
+[ -z "$SERVER" ] && { echo "Please specify a server address:"; read customserver; SERVER="${customserver}"; }
+[ -z "$SHARE" ] && { echo "Please specify a share on the server:"; read customshare; SHARE="${customshare}"; }
+[ -z "$USER" ] && { echo "Please specify a username (domain syntax DOM\\\\User):"; read customuser; USER="${customuser}"; }
+[ -z "$PASS" ] && { echo "Please specify a password (nothing will be echoed):"; read -s custompass; PASS="${custompass}"; }
+
+echo "Mounting share..."
+mount -t cifs //"${SERVER}"/"${SHARE}" -o username="${USER}",password="${PASS}" "${REMOTEDIR}" && echo "Done." || { echo "Failed to mount share. Exiting to Linux.  Type \"autorun\" to start this process over again."; exit 1; }
+
+fullcimgname=
+while [ -z "$fullcimgname" ]
+do 
+[ -e ${REMOTEDIR}${cimgname}.000 ] && { echo "An image with that name already exists."; fullcimgname=""; echo "What would you like to name this image? No spaces or weird characters."; read cimgname; continue; } ||fullcimgname="${LOCALDIR}${cimgname}.000" 
+done
+
+echo "Creating image..."
+partimage -z1 -d -M -b save /dev/${cimgpart} ${REMOTEDIR}${cimgname} && { echo "Image successfully created! Exiting. Type \"autorun\" to start this process over again."; cd /; umount ${REMOTEDIR} > /dev/null 2>&1; exit 0; } || { echo "Image creation failed. Exiting to Linux. Type \"autorun\" to start this process over again."; exit 1; }
+fi 
+
+
+;;
+
+
+
+
+
+
+3)echo "My partition table look like this:"
+cat /proc/partitions|awk '{print $4,$3}' || { echo "Could not obtain my drive configuration information. Exiting to Linux.  Type \"autorun\" to start this process over again."; exit 1; }
+
+cimgpart=
+while [ -z "$cimgpart" ]
+do 
+echo "What partition would you like to restore an image to? Type the name and number specification (ie: sda2)"
+read cimgpart
+[ ! -e "/dev/${cimgpart}" ] && { echo "The partition you specified can not be found."; cimgpart=""; continue; }
+done
+
+
+clocchoice=
+while [ -z "$clocchoice" ]
+do 
+echo "Do you want to pull this image from the Local machine or off of a Remote server (l,r)?"
+read clocchoice
+
+if [ "$clocchoice" != "l" -a "$clocchoice" != "r" ]; then
+echo "You have to choose \"l\" or \"r\"."
+clocchoice=""
+continue;
+fi
+done
+
+
+if [ "$clocchoice" == "l" ]; then
+
+echo "My local images are..."
+ls "${LOCALDIR}" | grep ".000" || { echo "Could not find any local images. Exiting to Linux.  Type \"autorun\" to start this process over again."; exit 1; }
+
+echo "Please type the name of the image you want to restore."
+read cimgname
+
+fullcimgname=
+while [ -z "$fullcimgname" ]
+do 
+[ ! -e ${LOCALDIR}${cimgname} ] && { echo "An image with that name does not exist."; fullcimgname=""; echo "Please type the name of the image you want to restore."; read cimgname; continue; } ||fullcimgname="${LOCALDIR}${cimgname}.000" 
+done
+
+echo "Restoring image..."
+partimage  -d -b restore /dev/${cimgpart} ${LOCALDIR}${cimgname} && { echo "Image successfully restored! Exiting. Type \"autorun\" to start this process over again."; exit 0; } || { echo "Restore failed. Exiting to Linux. Type \"autorun\" to start this process over again."; exit 1; }
+fi 
+
+
+if [ "$clocchoice" == "r" ]; then
+[ -z "$SERVER" ] && { echo "Please specify a server address:"; read customserver; SERVER="${customserver}"; }
+[ -z "$SHARE" ] && { echo "Please specify a share on the server:"; read customshare; SHARE="${customshare}"; }
+[ -z "$USER" ] && { echo "Please specify a username (domain syntax DOM\\\\User):"; read customuser; USER="${customuser}"; }
+[ -z "$PASS" ] && { echo "Please specify a password (nothing will be echoed):"; read -s custompass; PASS="${custompass}"; }
+
+echo "Mounting share..."
+mount -t cifs //"${SERVER}"/"${SHARE}" -o username="${USER}",password="${PASS}" "${REMOTEDIR}" && echo "Done." || { echo "Failed to mount share. Exiting to Linux.  Type \"autorun\" to start this process over again."; exit 1; }
+
+
+echo "The remote images are..."
+ls "${REMOTEDIR}" | grep ".000" || { echo "Could not find any remote images. Exiting to Linux.  Type \"autorun\" to start this process over again."; exit 1; }
+
+echo "Please type the name of the image you want to restore."
+read cimgname
+
+
+fullcimgname=
+while [ -z "$fullcimgname" ]
+do 
+[ ! -e ${REMOTEDIR}${cimgname} ] && { echo "An image with that name does not exist."; fullcimgname=""; echo "Please type the name of the image you want to restore."; read cimgname; continue; } ||fullcimgname="${LOCALDIR}${cimgname}.000" 
+done
+
+echo "Restoring image..."
+partimage -d -b restore /dev/${cimgpart} ${REMOTEDIR}${cimgname} && { echo "Image successfully restored! Exiting. Type \"autorun\" to start this process over again."; cd /; umount ${REMOTEDIR} > /dev/null 2>&1; exit 0; } || { echo "Image restoration failed. Exiting to Linux. Type \"autorun\" to start this process over again."; exit 1; }
+fi 
+;;
+
+4)echo "My hard drives are:"
+cat /proc/partitions |grep -e "[hs]d[a-z]$" |awk '{print $4,$3}' || { echo "Could not obtain my drive configuration information. Exiting to Linux.  Type \"autorun\" to start this process over again."; exit 1; }
+
+drive=
+while [ -z "$drive" ]
+do
+echo "Please type the name of the drive that contains the recovery partition and the windows install." 
+read drive
+[ ! -e "/dev/${drive}" ] && { echo "The drive you specified can not be found."; drive=""; continue; }
+done
+
+echo "Installing grub..."
+#Convert the drive to layout to grub scheme.
+DRIVEDEF=${drive:2:1}
+COUNTER="0"
+for x in {a..z}
+do
+if [ "$DRIVEDEF" == "${x}" ]
+then
+DRIVEDEFNUM=${COUNTER}
+break
+fi
+let COUNTER++
+done
+
+
+#This installs grub to the MBR of your root drive, overwriting anything that is already there. 
+#I don't know of another way to make sure it works script wise.  
+#It sets the root (where linux is) to the first partition on the drive that you chose to format.  
+
+grub --batch <<ENDGRUB 1>/dev/null 2>/dev/null
+root (hd${DRIVEDEFNUM},0)
+setup (hd0)
+quit
+ENDGRUB
+ 
+if [ "$?" -ne "0" ]; then
+echo -e "Grub install failed. Exiting to Linux.  Type \"autorun\" to start this process over again."
+exit 1
+else
+echo "Done."
+fi
+
+echo "Mounting the Linux Partition..."
+mount /dev/${drive}1 /mnt/custom && echo "Done." || { echo "Failed to mount the linux partition. Exiting to Linux.  Type \"autorun\" to start this process over again."; exit 1; }
+
+
+echo "Configurging grub..."
+mv -f /mnt/custom/boot/grub/menu.lst /mnt/custom/boot/grub/menu.lst.bak
+echo "
+default	0
+timeout	5
+hiddenmenu
+title Windows
+rootnoverify (hd${DRIVEDEFNUM},1)
+savedefault
+makeactive
+chainloader +1
+
+title System Rescue
+root (hd${DRIVEDEFNUM},0)
+kernel /boot/rescuecd scandelay=5 backstore=alldev setkmap=us
+initrd /boot/initram.igz" >> /mnt/custom/boot/grub/menu.lst && echo "Done." || { echo "Failed to configure grub. Exiting to Linux.  Type \"autorun\" to start this process over again."; exit 1; }
+
+echo "Unmounting the Linux partition..."
+cd /
+umount /mnt/custom && echo "Done." ||  echo "Failed to unmount the Linux partition." 
+
+exit 0
+;;
+
+
+5)echo "My hard drives are:"
+cat /proc/partitions |grep -e "[hs]d[a-z]$" |awk '{print $4,$3}' || { echo "Could not obtain my drive configuration information. Exiting to Linux.  Type \"autorun\" to start this process over again."; exit 1; }
+
+drive=
+while [ -z "$drive" ]
+do
+echo "Please type the name of the drive that contains the MBR and partition table you want to backup." 
+read drive
+[ ! -e "/dev/${drive}" ] && { echo "The drive you specified can not be found."; drive=""; continue; }
+done
+
+echo "What would you like to name these drive information backups? No spaces or weird characters."
+read cimgname
+
+
+
+clocchoice=
+while [ -z "$clocchoice" ]
+do 
+echo "Do you want to store these drive information backups on the Local machine or Remotely on a server (l,r)?"
+read clocchoice
+
+if [ "$clocchoice" != "l" -a "$clocchoice" != "r" ]; then
+echo "You have to choose \"l\" or \"r\"."
+clocchoice=""
+continue;
+fi
+done
+
+
+if [ "$clocchoice" == "l" ]; then
+fullcimgname=
+while [ -z "$fullcimgname" ]
+do 
+[ -e ${LOCALDIR}${cimgname}.partitions -o -e ${LOCALDIR}${cimgname}.mbr ] && { echo "Drive information backups with that name already exist."; fullcimgname=""; echo "What would you like to name these drive information backups? No spaces or weird characters."; read cimgname; continue; } ||fullcimgname="${LOCALDIR}${cimgname}.partitions" 
+done
+
+echo "Backing up the partition table..."
+sfdisk -d /dev/${drive} > ${LOCALDIR}${cimgname}.partitions && echo "Done." || { echo "Partition table backup failed. Exiting to Linux. Type \"autorun\" to start this process over again."; exit 1; }
+
+echo "Backing up the MBR..."
+dd if=/dev/${drive} of=${LOCALDIR}${cimgname}.mbr bs=512 count=1 > /dev/null 2>&1 && echo "Done." || { echo "MBR backup failed. Exiting to Linux. Type \"autorun\" to start this process over again."; exit 1; }
+fi 
+
+
+if [ "$clocchoice" == "r" ]; then
+[ -z "$SERVER" ] && { echo "Please specify a server address:"; read customserver; SERVER="${customserver}"; }
+[ -z "$SHARE" ] && { echo "Please specify a share on the server:"; read customshare; SHARE="${customshare}"; }
+[ -z "$USER" ] && { echo "Please specify a username (domain syntax DOM\\\\User):"; read customuser; USER="${customuser}"; }
+[ -z "$PASS" ] && { echo "Please specify a password (nothing will be echoed):"; read -s custompass; PASS="${custompass}"; }
+
+echo "Mounting share..."
+mount -t cifs //"${SERVER}"/"${SHARE}" -o username="${USER}",password="${PASS}" "${REMOTEDIR}" && echo "Done." || { echo "Failed to mount share. Exiting to Linux.  Type \"autorun\" to start this process over again."; exit 1; }
+
+fullcimgname=
+while [ -z "$fullcimgname" ]
+do 
+[ -e ${REMOTEDIR}${cimgname}.partitions -o -e ${REMOTEDIR}${cimgname}.mbr ] && { echo "Drive information backups with that name already exist."; fullcimgname=""; echo "What would you like to name these drive information backups? No spaces or weird characters."; read cimgname; continue; } ||fullcimgname="${REMOTEDIR}${cimgname}.partitions" 
+done
+
+echo "Backing up the partition table..."
+sfdisk -d /dev/${drive} > ${REMOTEDIR}${cimgname}.partitions && echo "Done." || { echo "Partition table backup failed. Exiting to Linux. Type \"autorun\" to start this process over again."; exit 1; }
+
+echo "Backing up the MBR..."
+dd if=/dev/${drive} of=${REMOTEDIR}${cimgname}.mbr bs=512 count=1 > /dev/null 2>&1 && echo "Done." || { echo "MBR backup failed. Exiting to Linux. Type \"autorun\" to start this process over again."; exit 1; }
+fi 
+
+cd /; umount ${REMOTEDIR} > /dev/null 2>&1;
+exit 0
+
+;;
+
+
+
+6)exit 0
+;;
+7)shutdown -hf now
+;;
+*) 
+echo "Invalid option chosen. Exiting to Linux.  Type \"autorun\" to start this process over again."  
+	   exit 1;
+
+
+esac 

@@ -1,0 +1,74 @@
+#!/bin/bash
+#MASS Imaging script.  
+#This is ugly.  
+#DM
+
+#LOCALDIR="/images/"
+REMOTEDIR="/mnt/cdrom/"
+SERVER="192.168.1.11"
+SHARE="images"
+USER="DOMAIN\\user"
+PASS="password"
+MBR="test.mbr"
+PARTTABLE="testwin7.partitions"
+DRIVE="/dev/sda"
+PART1="/dev/sda1"
+PART2="/dev/sda2"
+PART1IMAGE="testwin7-restore.000"
+PART2IMAGE="testwin7-win.000"
+
+#basic cleanup
+cd /
+umount ${REMOTEDIR} > /dev/null 2>&1
+
+
+#useful for dhcp setup.  
+echo "My network info is:"
+{ sleep 3; ifconfig | grep HWaddr; ifconfig | grep "inet addr"; } || echo -e "I was unable to find my networking information." 
+
+echo "I am about to write the master image to this machine.  ALL DATA WILL BE LOST.  Continue (y,n)?"
+read answer
+[ "$answer" != "y" ] && { echo "Installation aborted. Exiting to Linux.  Type \"autorun\" to start this process over again."; exit 1; }
+
+
+echo "Mounting share..."
+mount -t cifs //"${SERVER}"/"${SHARE}" -o username="${USER}",password="${PASS}" "${REMOTEDIR}" && echo "Done." || { echo "Failed to mount share. Exiting to Linux.  Type \"autorun\" to start this process over again."; exit 1; }
+
+
+
+[ ! -e ${REMOTEDIR}${MBR} ] && { echo "I could not find the MBR backup file you specified. Exiting to Linux.  Type \"autorun\" to start this process over again."; exit 1; }
+
+[ ! -e ${REMOTEDIR}${PARTTABLE} ] && { echo "I could not find the partition table backup file you specified. Exiting to Linux.  Type \"autorun\" to start this process over again."; exit 1; }
+
+[ ! -e ${REMOTEDIR}${PART1IMAGE} ] && { echo "I could not find the first image file you specified. Exiting to Linux.  Type \"autorun\" to start this process over again."; exit 1; }
+
+[ ! -e ${REMOTEDIR}${PART2IMAGE} ] && { echo "I could not find the second image file you specified. Exiting to Linux.  Type \"autorun\" to start this process over again."; exit 1; }
+
+
+echo "Restoring the partition table..."
+sfdisk --force ${DRIVE} < ${REMOTEDIR}${PARTTABLE} > /dev/null 2>&1 && echo "Done." || { echo "Partition table restore failed. Exiting to Linux. Type \"autorun\" to start this process over again."; exit 1; }
+
+
+echo "Restoring the MBR..."
+dd if=${REMOTEDIR}${MBR} of=${DRIVE} bs=512 count=1 > /dev/null 2>&1 && echo "Done." || { echo "MBR restore failed. Exiting to Linux. Type \"autorun\" to start this process over again."; exit 1; }
+
+echo "Refreshing paritition table..."
+partprobe && echo "Done." || { echo "Partprobe failed. Exiting to Linux. Type \"autorun\" to start this process over again."; exit 1; }
+
+
+[ ! -e ${PART1} -o ! -e ${PART2} ] && { echo "One of the partitions you specified can not be found. Exiting to Linux.  Type \"autorun\" to start this process over again."; exit 1; }
+
+
+echo "Restoring image1..."
+partimage -d -b restore ${PART1} ${REMOTEDIR}${PART1IMAGE} && echo "Image 1 successfully restored!" || { echo "Image restoration failed. Exiting to Linux. Type \"autorun\" to start this process over again."; exit 1; }
+
+
+echo "Restoring image2..."
+partimage -d -b restore ${PART2} ${REMOTEDIR}${PART2IMAGE} && echo "Image 2 successfully restored!" || { echo "Image restoration failed. Exiting to Linux. Type \"autorun\" to start this process over again."; exit 1; }
+
+echo "Everything completed successfully."
+
+
+cd /; umount ${REMOTEDIR} > /dev/null 2>&1;
+exit 0
+

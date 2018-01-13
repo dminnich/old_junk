@@ -1,0 +1,235 @@
+Linux and Windows AD interoperability guide....
+
+I work in a diverse environment.  Some of our end users use Windows, others use Macs and yet others use Linux.  On the server side of things we usually stick with Linux.
+
+In the not to distant past we had a Samba domain controller and samba file servers.  This worked OK.   Samba, however, just doesn't offer a lot of the niceties that a true Windows AD environment does. Things like group policy, that make managing a large number of windows clients easier, are absent in the samba implementation.  
+
+When we decided to deploy a true Windows based AD, we had to make a decision--- should we convert all of our file servers to windows as well? Or, should we try to force the samba file servers to work with the new windows AD setup?  Since doing the former would remove  flexibility of the file servers (ie: no more ssh or nfs) and require us to buy tons of brand new servers with lots of storage (and then move and repermission all the data we currently have), we chose to take the second route.  
+
+We ended up with one new Windows 2008 PDC.  We were able to keep all of our file servers running Linux by reconfiguring samba and some system libraries on them so that they would talk to the PDC.  In the end, this saved us a bunch of money and time while simultaneously letting us keep our flexible environment.
+
+The implementation gotchas of this setup are:
+-All accounts and groups must be created in the AD
+-Passwords must be set in the AD
+-After the initial conversion, you will need to manually enable and set passwords for all of your current users
+-If you use my migration scripts, all group names will be prefixed with a "g-".  You can change that later but it was put in place because most linux distros create a user account and a group for each user that are named the same thing.  No two objects can have the same name in the AD, even if they are in a different OU, so appending a g- was a quick and dirty solution.  It also makes them stand out more in the Users OU since users and groups are mixed together there by default.  
+-You may need to manually fill in the Unix attributes fields for new users and groups (there may not be a good way to know which uid number comes next!!).  And you will have to manually create the accounts a home directory on the linux servers if they will be accessing them.
+
+Here is what this guide will help you accomplish:
+1) Setup a Linux machine to look for user and group information in an AD.
+2) Setup a Linux machine so that accounts that only exist in the AD can login to the Linux machine. All password stuff is passed on to the PDC. 
+3) Setup a Linux machine so that it is a member file server in an AD environment.  
+
+
+*******************************
+INITIAL WINDOWS PDC SETUP
+*******************************
+Install Server 2008.
+Install the Active Directory Role.  Make sure it installs DNS as well. 
+Right click the Active Directory Role in Server Manager and choose Add Role or something like that. 
+Install the Identity Management For Unix piece.  
+Create an account in the guest group and call it "linuxldap".  Give it a password.  
+Create another account and call it "linuxldapr".  Give it a password.  
+Pull up the properties of these accounts and make sure you see a Unix Attributes tab.  
+
+
+*************************************  
+INITIAL LINUX SERVER SETUP
+*************************************
+Install RHEL/CENT 5.6.
+Install openldap-clients, pam_krb5, nss_ldap, and a recent version of samba (from http://www.enterprisesamba.org/)
+Give the machine a FQDN in the AD Domain in /etc/sysconfig/network and /etc/hosts
+Set the nameserver entries in /etc/resolv.conf to point at the PDC
+Run a net time set -S PDC.   Create cron job that does this frequently. 
+
+
+************************************************************
+GETTING LINUX TO PULL ACCOUNT AND GROUP INFO FROM THE AD
+************************************************************
+Create a test user in the AD (testaduser).  Populate its Unix Attributes fields.  
+
+On the linux machine run a 
+ldapsearch -H ldap://PDC -x -D linuxldap@domain.local -W
+Enter the password and it should spit out a lot of LDAP entries.  
+Make sure you see the testaduser in this list.  
+
+On the linux machine run a 
+getent passwd
+It should pull out just the account that are in /etc/passwd
+
+
+vim /etc/ldap.conf
+base dc=domain,dc=local
+binddn linuxldap@domain.local
+bindpw thepasswordyouchose
+rootbinddn linuxldapr@domain.local
+	vim /etc/ldap.secret 
+	thepasswordyouchose
+	chmod 600 /etc/ldap.secret
+scope sub
+####http://blog.scottlowe.org/2007/07/09/linux-ad-integration-with-windows-server-2008/
+###http://joseph.randomnetworks.com/2004/06/21/active-directory-with-nss_ldap-and-pam_ldap/
+nss_base_passwd cn=Users,dc=domain,dc=local?one
+nss_base_shadow cn=Users,dc=domain,dc=local?one
+nss_base_group  cn=Users,dc=domain,dc=local?one  
+nss_map_objectclass posixAccount user
+nss_map_objectclass shadowAccount user
+nss_map_objectclass posixGroup group
+nss_map_attribute gecos cn
+nss_map_attribute homeDirectory unixHomeDirectory
+nss_map_attribute uniqueMember member
+uri ldap://PDC
+ssl no
+tls_cacertdir /etc/openldap/cacerts
+pam_password md5
+
+On the linux machine run a 
+getent passwd (as both root and as a normal user)
+You should see accounts from both /etc/passwd and the test AD account you created. 
+
+Populate the AD with all the accounts you need.  
+You can use my linux2ad-* scripts to do this.  You can find these listed under the python section of my site. Be sure to read the top and the bottom of all of the scripts.  There are some variables you need to set at the top of them and some bash-fu at the bottom.  You also need to run them in a specific order that is laid out in the top of the files. 
+
+
+
+************************************************************
+GETTING LINUX TO AUTH PASSWORDS AGAINST THE AD
+************************************************************
+authconfig-tui
+krb
+realm: domain.local
+KDC: PDC
+kaserver: PDC
+
+vim /etc/krb5.conf
+[logging]
+ default = FILE:/var/log/krb5libs.log
+ kdc = FILE:/var/log/krb5kdc.log
+ admin_server = FILE:/var/log/kadmind.log
+
+[libdefaults]
+ default_realm = DOMAIN.LOCAL
+ dns_lookup_realm = false
+ dns_lookup_kdc = false
+ ticket_lifetime = 24h
+ forwardable = yes
+
+[realms]
+ EXAMPLE.COM = {
+  kdc = kerberos.example.com:88
+  admin_server = kerberos.example.com:749
+  default_domain = example.com
+ }
+
+ DOMAIN.LOCAL = {
+  kdc = PDC
+  admin_server = PDC
+ }
+
+[domain_realm]
+ .example.com = EXAMPLE.COM
+ example.com = EXAMPLE.COM
+
+ domain.local = DOMAIN.LOCAL
+ .domain.local = DOMAIN.LOCAL
+[appdefaults]
+ pam = {
+   debug = false
+   ticket_lifetime = 36000
+   renew_lifetime = 36000
+   forwardable = true
+   krb4_convert = false
+ }
+
+
+kinit linuxldap
+enter password
+klist to see ticket
+kdestroy to kill it.  
+
+ssh testaduser@linuxserver
+AD password
+Should work
+
+************************************************************
+MAKING SAMBA BE A MEMBER FILE SERVER
+************************************************************
+
+    /etc/init.d/smb stop
+   vim /etc/samba/smb.conf
+
+[global]
+ log level = 1
+        log file = /var/log/samba/%m_%M.log
+        workgroup = DOMAIN
+        realm = DOMAIN.LOCAL
+        security = ADS
+#No foreign user uniquness.  usernames always the same UID. 
+        allow trusted domains = No
+        password server = PDC
+#be a dumb file server only
+        os level = 10
+        preferred master = No
+        local master = No
+        domain master = No
+        domain logons = no
+        wins support = no
+        wins proxy = no 
+        dns proxy = no 
+        cups options = raw
+        server string =  File Server
+        host msdfs = yes
+#security and performance tuning
+        hosts allow = 192.168.
+        hosts deny = 0.0.0.0/0
+        encrypt passwords = yes
+#acceptable. These cause issues with vista+
+;        lanman auth = no
+;        ntlm auth = no
+        min protocol = NT1
+#breaks dfs
+#        restrict anonymous = 2
+        disable netbios = yes
+        socket options = TCP_NODELAY IPTOS_LOWDELAY SO_RCVBUF=65536 SO_SNDBUF=65536
+        deadtime = 15
+        read raw = yes
+        write raw = yes
+        sync always = no
+        strict sync = no
+        max xmit = 65535
+        getwd cache = yes
+        lm announce = no
+#these changes gave no performance gains
+#        aio read size = 1
+#        aio write size = 1
+#        aio write behind = true
+#        case sensitive = True
+#        default case = lower
+#        preserve case = no
+#        short preserve case = no
+#        write cache size = 16777216
+        smb ports = 445
+        include = /etc/samba/shares/shares.conf
+#Vista and 7 require a public IPC for auth for some stupid reason. 
+ #Kill all browsing
+#[IPC$]
+#hosts allow = 127.0.0.1
+#hosts deny = 0.0.0.0/0
+
+
+Test the samba config...
+     testparm
+
+Join the domain.  
+net ads join -UAdministrator -d 10
+NOTE: If it won't drop into the right place, you may have to manually create the computer object in AD before you join. 
+
+Verify the domain join was successful...
+Look at the debug stuff and make sure it looks right.  Then do a:
+tdbdump /etc/samba/secrets.tdb
+net ads info 
+host linuxserver.domain.local PDC (may take a few secs to propogate) 
+to verify the join worked.  
+NOTE: DNS IS required for DFS and possibly other things.  If it fails, troubleshoot with net ads dns register -I DNSSRVIP -U Administrator -d 10 or just manually add DNS entries in the AD DNS Server Window. 
+
+Start samba and look at its logs to make sure things look right. 

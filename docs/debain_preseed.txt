@@ -1,0 +1,51 @@
+Debian Preseed Howto:
+
+A small computer shop that I'm affiliated  with wanted a way to recycle and re-sell (for cheap) old computers that would otherwise be heading to the scrap pile.  The overall idea was to create a basic and easy to use system and then sell the machine with one-on-one training to older people who had never (or barely ever) used a computer.  
+
+I tried Ubuntu since it is the champion of desktops, but I was unhappy with its fast change rate.  I decided to instead automate a baseline debian install and then add only the packages I wanted.  Anyhow, here is how I did it.    
+
+
+NOTE: You will need a Linux machine and some linux knowledge.  This is a mind-dump and may not be 100% correct, but it should get you started.  
+
+1) Download a squeeze business card ISO.  
+2) Make some tmp directories
+   mkdir ~/squeeze_remaster
+   mkdir /mnt/tmp
+3) Mount the ISO
+   mount -o loop ~/debian...  /mnt/loop
+4) Copy the files to the tmp directory
+   rsync -avz /mnt/loop ~/squeeze_remaster
+5) Edit the ~/squeeze_remaster/isolinux/txt.cfg file
+   Change the default line to something like this...
+     default desktopps
+   Add lines like this
+      label desktopps
+	menu label ^Desktop Preseed
+	menu default
+	kernel /install.386/vmlinuz
+	append vga=788 initrd=/install.386/initrd.gz url=http://dminnich.com/files/ps.conf vga=788 locale=en_US console-keymaps-at/keymap=us hostname=localhost domain=localdomain 
+
+NOTE:  Update the URL to point at a server you manage.  Also, update the locale stuff if you don't want english.  Also, please note that these things have to be included here *even if* you put them in your preseed file.  
+
+6) Grab a copy of dminnich.com/files/ps.conf, dminnich.com/files/setup.sh and dminnich.com/files/packages.txt  and edit them to fit your needs and then put them on a server you manage and that you pointed to in 5.  
+ps.conf is the preseed file.  It answers the installer questions and does a couple of other small configuration tasks.  Right now it is setup for english and EST time.  It is also setup to prompt you for user and partition info.  It is configured to only install the "standard" package group.  Finally, it adds the debian multimedia repo and grabs some post install scripts from my site. Be sure to edit those late commands so that wget points at your server. 
+
+setup.sh is a post install script I use.  Right now all it does is install package groups and a list of packages I put in packages.txt.  I prefer to do this work with a post install script instead of using the preseed because I find it more flexible.  It logs things and can be changed at a whim without having to re-master ISOs.  I can also do barebone server installs by using the same preseed and then just not running the setup.sh file.  Edit the script so that it meets your needs and put it on the server that the ps.conf late command points to.  
+
+packages.txt is simply a one package full name per line that you want setup.sh to install.  Edit it to meet your needs and put it on the server that the ps.conf late command points to. 
+
+7) Make the remastered CD
+   cd ~
+   mkisofs -r -V "Custom Debian Install CD" -cache-inodes -J -l -b isolinux/isolinux.bin -c isolinux/boot.cat -no-emul-boot -boot-load-size 4 -boot-info-table -o squeeze-preseed.iso squeeze_remaster/
+
+8) Unmount your stuff 
+   umount /mnt/loop
+
+9) Burn your squeeze-preseed.iso file to a disc and give it a shot.  
+You should see a "Desktop Preseed" option in the menu.  
+You shouldn't be prompted to answer many questions.  
+Your customized setup.sh and packages.txt should be copied to /root/ once the install is done. 
+Issuing ./setup.sh should do the follow-up install and config work.  
+The machine should now be in your preferred "perfect" state.  
+
+   
